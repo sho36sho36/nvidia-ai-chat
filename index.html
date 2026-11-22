@@ -1,0 +1,163 @@
+﻿<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NVIDIA AI Multi-Chat</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0d1117;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;height:100vh}
+#auth{position:fixed;inset:0;background:#0d1117;display:flex;align-items:center;justify-content:center;z-index:99}
+.box{background:#161b22;padding:24px;border:1px solid #30363d;border-radius:10px;width:320px}
+input,select,textarea,button{background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:8px;font-size:14px}
+button{cursor:pointer;background:#238636;border:none;font-weight:bold}button.sec{background:#21262d;border:1px solid #30363d}button.del{background:#da3633}
+#side{width:250px;background:#161b22;border-right:1px solid #30363d;display:flex;flex-direction:column;padding:10px;gap:8px}
+#clist{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:4px}
+.citem{padding:8px;border-radius:6px;cursor:pointer;background:#0d1117;font-size:14px}
+.citem.act{border:1px solid #58a6ff;background:#1f2937}
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+#top{padding:10px;background:#161b22;border-bottom:1px solid #30363d;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+.turn{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:14px;line-height:1.6}
+.q{color:#58a6ff;font-weight:bold;margin-bottom:8px;white-space:pre-wrap}
+details{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:6px 10px;margin-bottom:8px}
+summary{cursor:pointer;color:#8b949e;font-size:13px}
+pre{background:#0d1117;padding:12px;border-radius:6px;overflow-x:auto;border:1px solid #30363d;margin:8px 0}
+code{font-family:Consolas,Monaco,monospace;font-size:13px}
+p code,li code,.math{background:#21262d;padding:2px 6px;border-radius:4px;color:#a5d6ff;font-family:Cambria,"Times New Roman",serif;font-size:15px}
+.mblk{display:block;background:#0d1117;border-left:3px solid #58a6ff;padding:8px 12px;margin:8px 0;font-family:Cambria,"Times New Roman",serif;font-size:16px;color:#e6edf3}
+.md h1,.md h2,.md h3{margin:10px 0 6px;color:#79c0ff}.md ul{margin:6px 0;padding-left:20px}.md a{color:#58a6ff}
+.cacts{display:flex;gap:6px;margin:4px 0 12px}
+.stat{font-size:12px;color:#7ee787;margin-top:8px}
+#bot{padding:10px;background:#161b22;border-top:1px solid #30363d;display:flex;gap:8px}
+textarea{flex:1;resize:none;height:54px}
+#adm-modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:50}
+</style></head><body>
+<div id="auth"><div class="box"><h3>🔐 NVIDIA AI ログイン</h3>
+<input id="au" placeholder="ユーザー名" style="width:100%;margin-bottom:8px">
+<input id="ap" type="password" placeholder="パスワード" style="width:100%;margin-bottom:12px">
+<div style="display:flex;gap:8px"><button onclick="doAuth('login')" style="flex:1">ログイン</button><button class="sec" onclick="doAuth('register')" style="flex:1">新規申請</button></div>
+<p id="amsg" style="color:#f0883e;font-size:13px;margin-top:10px"></p></div></div>
+<div id="adm-modal"><div class="box" style="width:380px"><h3>👑 ユーザー承認管理</h3><div id="ulist"></div><button class="sec" onclick="document.getElementById('adm-modal').style.display='none'" style="margin-top:10px;width:100%">閉じる</button></div></div>
+<div id="side"><div style="display:flex;gap:4px"><button onclick="newChat()" style="flex:1">+新規</button><button class="sec" onclick="renChat()">名変</button><button class="del" onclick="delChat()">削除</button></div>
+<input id="sq" placeholder="🔍 全文検索..." oninput="renderList()"><div id="clist"></div></div>
+<div id="main"><div id="top">
+<select id="msel"><option value="mistralai/mistral-large-4-1t-a52b">Mistral Large 4</option><option value="nvidia/nemotron-3.5-bolt-e4b">Nemotron 3.5 Bolt</option><option value="stepfun-ai/step-5-preview">Step 5 Preview</option><option value="z-ai/glm-5-3-flash">GLM-5-3-Flash</option><option value="meta/muse-glimmer-30b">Muse Glimmer 30B</option></select>
+<select id="esel"><option value="low">思考:Low</option><option value="medium">思考:Med</option><option value="high">思考:High</option></select>
+<button id="adm-btn" class="sec" style="display:none" onclick="openAdmin()">👑 ユーザー管理</button>
+<button class="sec" onclick="logout()" style="margin-left:auto">ログアウト</button></div>
+<div id="msgs"></div>
+<div id="bot"><textarea id="inp" placeholder="質問を入力 (Shift+Enterで改行 / Enterで送信)"></textarea><button id="sbtn" onclick="send()">送信</button></div></div>
+<script>
+let tok=localStorage.getItem("nv_tok")||"",chats={},cid="";
+const api=(p,opt={})=>fetch(p,{...opt,headers:{"Content-Type":"application/json","Authorization":tok,...(opt.headers||{})}});
+const esc=s=>String(s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const SUP={"0":"⁰","1":"¹","2":"²","3":"³","4":"⁴","5":"⁵","6":"⁶","7":"⁷","8":"⁸","9":"⁹","+":"⁺","-":"⁻","=":"⁼","(":"⁽",")":"⁾","n":"ⁿ","i":"ⁱ","j":"ʲ","k":"ᵏ"};
+const SUB={"0":"₀","1":"₁","2":"₂","3":"₃","4":"₄","5":"₅","6":"₆","7":"₇","8":"₈","9":"₉","+":"₊","-":"₋","=":"₌","(":"₍",")":"₎","a":"ₐ","e":"ₑ","h":"ₕ","i":"ᵢ","j":"ⱼ","k":"ₖ","l":"ₗ","m":"ₘ","n":"ₙ","o":"ₒ","p":"ₚ","r":"ᵣ","s":"ₛ","t":"ₜ","u":"ᵤ","v":"ᵥ","x":"ₓ"};
+const MTOK=[["\\Longleftrightarrow","⇔"],["\\iff","⇔"],["\\implies","⇒"],["\\Rightarrow","⇒"],["\\Leftarrow","⇐"],["\\rightarrow","→"],["\\to","→"],["\\leftarrow","←"],["\\iiint","∭"],["\\iint","∬"],["\\oint","∮"],["\\int","∫"],["\\bigcup","⋃"],["\\bigcap","⋂"],["\\bigoplus","⨁"],["\\bigotimes","⨂"],["\\sum","∑"],["\\prod","∏"],["\\emptyset","∅"],["\\therefore","∴"],["\\because","∵"],["\\propto","∝"],["\\parallel","∥"],["\\perp","⊥"],["\\equiv","≡"],["\\approx","≈"],["\\neq","≠"],["\\leq","≤"],["\\geq","≥"],["\\sim","∼"],["\\land","∧"],["\\lor","∨"],["\\neg","¬"],["\\forall","∀"],["\\exists","∃"],["\\notin","∉"],["\\in","∈"],["\\subseteq","⊆"],["\\subset","⊂"],["\\supseteq","⊇"],["\\supset","⊃"],["\\cup","∪"],["\\cap","∩"],["\\times","×"],["\\div","÷"],["\\pm","±"],["\\mp","∓"],["\\infty","∞"],["\\partial","∂"],["\\nabla","∇"],["\\hbar","ℏ"],["\\lim","lim"],["\\langle","⟨"],["\\rangle","⟩"],["\\triangle","△"],["\\angle","∠"],["\\cdot","·"],["\\Delta","Δ"],["\\Omega","Ω"],["\\Sigma","Σ"],["\\Phi","Φ"],["\\Psi","Ψ"],["\\Lambda","Λ"],["\\Gamma","Γ"],["\\Pi","Π"],["\\Theta","Θ"],["\\alpha","α"],["\\beta","β"],["\\gamma","γ"],["\\delta","δ"],["\\epsilon","ε"],["\\zeta","ζ"],["\\eta","η"],["\\theta","θ"],["\\iota","ι"],["\\kappa","κ"],["\\lambda","λ"],["\\mu","μ"],["\\nu","ν"],["\\xi","ξ"],["\\pi","π"],["\\rho","ρ"],["\\sigma","σ"],["\\tau","τ"],["\\phi","φ"],["\\chi","χ"],["\\psi","ψ"],["\\omega","ω"],["\\mathbb{R}","ℝ"],["\\mathbb{N}","ℕ"],["\\mathbb{Z}","ℤ"],["\\mathbb{Q}","ℚ"],["\\mathbb{C}","ℂ"],["\\quad","  "],["\\left",""],["\\right",""]];
+function convMath(s){
+ s=s.replace(/\\begin\{(?:p|b|v|B|V)?matrix\}([\s\S]*?)\\end\{(?:p|b|v|B|V)?matrix\}/g,(_,b)=>"[ "+b.trim().split("\\\\").map(r=>r.split("&").map(c=>c.trim()).join("  ")).join(" / ")+" ]");
+ for(const[k,v]of MTOK)s=s.split(k).join(v);
+ s=s.replace(/\\(?:mathbf|textbf|text|mathrm|mathcal|mathfrak|mathscr)\{([^{}]+)\}/g,"$1")
+  .replace(/\\vec\{([^{}]+)\}/g,"$1⃗").replace(/\\overline\{([^{}]+)\}/g,"$1̅").replace(/\\bar\{([^{}]+)\}/g,"$1̄").replace(/\\hat\{([^{}]+)\}/g,"$1̂")
+  .replace(/\\binom\{([^{}]+)\}\{([^{}]+)\}/g,"($1 C $2)").replace(/\\sqrt\[3\]\{([^{}]+)\}/g,"∛($1)").replace(/\\sqrt\{([^{}]+)\}/g,"√($1)");
+ for(let i=0;i<3;i++)s=s.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g,"($1/$2)");
+ s=s.replace(/\^\{([^{}]+)\}/g,(_,g)=>[...g].map(c=>SUP[c]||c).join("")).replace(/\^([0-9a-zA-Z+-])/g,(_,c)=>SUP[c]||c)
+  .replace(/_\{([^{}]+)\}/g,(_,g)=>[...g].map(c=>SUB[c]||c).join("")).replace(/_([0-9a-zA-Z+-])/g,(_,c)=>SUB[c]||c);
+ return s;
+}
+function md(src){
+ const blocks=[];
+ let t=String(src||"").replace(/```([a-zA-Z0-9_+-]*)\s*\n([\s\(\S\)]*?)```/g,(_,l,c)=>{blocks.push(`<pre><code class="language-${esc(l)}">${esc(c)}</code></pre>`);return `\x00B${blocks.length-1}\x00`;});
+ t=t.replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g,(_,a,b)=>`<span class="mblk">${esc(convMath((a||b).trim()))}</span>`)
+  .replace(/\$([^$\n]+?)\$|\\\((.+?)\\\)/g,(_,a,b)=>`<span class="math">${esc(convMath((a||b).trim()))}</span>`);
+ t=esc(convMath(t)).replace(/&lt;span class="(mblk|math)"&gt;(.*?)&lt;\/span&gt;/g,'<span class="$1">$2</span>')
+  .replace(/`([^`\n]+)`/g,"<code>$1</code>").replace(/^### (.+)$/gm,"<h3>$1</h3>").replace(/^## (.+)$/gm,"<h2>$1</h2>").replace(/^# (.+)$/gm,"<h1>$1</h1>")
+  .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank">$1</a>')
+  .replace(/^\s*[-*] (.+)$/gm,"<ul><li>$1</li></ul>").replace(/<\/ul>\n<ul>/g,"").replace(/\n/g,"<br>");
+ return t.replace(/\x00B(\d+)\x00/g,(_,i)=>blocks.at(Number(i)));
+}
+const isBottom=()=>(msgs.scrollHeight-msgs.scrollTop-msgs.clientHeight)<=30;
+async function doAuth(t){
+ const r=await fetch("/api/"+t,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:au.value,password:ap.value})});
+ const d=await r.json(); if(!r.ok){amsg.textContent=d.detail;return;}
+ if(t==="register"){amsg.textContent=d.msg;return;}
+ tok=d.token;localStorage.setItem("nv_tok",tok);if(d.admin)document.getElementById("adm-btn").style.display="inline-block";
+ auth.style.display="none";init();
+}
+function logout(){localStorage.removeItem("nv_tok");location.reload();}
+async function init(){
+ const r=await api("/api/chats"); if(!r.ok){auth.style.display="flex";return;}
+ chats=await r.json(); const ks=Object.keys(chats);
+ if(!ks.length)await newChat(true); else{cid=ks.shift();renderList();renderMsgs();}
+}
+async function sync(){await api("/api/chats",{method:"POST",body:JSON.stringify(chats)});}
+async function newChat(skip){cid="c"+Date.now().toString(36);chats[cid]={title:"新規チャット",msgs:[],turns:[]};renderList();renderMsgs();if(!skip)await sync();}
+async function renChat(){const n=prompt("新しいチャット名",chats[cid].title);if(n){chats[cid].title=n;renderList();await sync();}}
+async function delChat(){delete chats[cid];const ks=Object.keys(chats);if(!ks.length)await newChat();else{cid=ks.shift();renderList();renderMsgs();await sync();}}
+function renderList(){
+ const q=sq.value.toLowerCase(); clist.innerHTML="";
+ for(const[k,v]of Object.entries(chats)){
+  const hit=!q||v.title.toLowerCase().includes(q)||v.turns.some(t=>(t.q+t.a+t.r).toLowerCase().includes(q));
+  if(!hit)continue;
+  const el=document.createElement("div");el.className="citem"+(k===cid?" act":"");
+  el.textContent=`${v.title} (${v.turns.length})`;el.onclick=()=>{cid=k;renderList();renderMsgs();};clist.appendChild(el);
+ }
+}
+function enhance(d){
+ d.querySelectorAll("pre code").forEach((cb,i)=>{
+  const bar=document.createElement("div");bar.className="cacts";
+  const code=cb.textContent,cls=cb.className;
+  const b1=document.createElement("button");b1.className="sec";b1.textContent="📋 コピー";b1.onclick=()=>navigator.clipboard.writeText(code);
+  const b2=document.createElement("button");b2.className="sec";b2.textContent="💾 保存";b2.onclick=()=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([code]));a.download="code_"+(i+1)+(cls.includes("html")?".html":cls.includes("py")?".py":".txt");a.click();};
+  bar.append(b1,b2);
+  if(cls.includes("html")){const b3=document.createElement("button");b3.textContent="🌐 ブラウザ実行";b3.onclick=()=>window.open(URL.createObjectURL(new Blob([code],{type:"text/html"})),"_blank");bar.append(b3);}
+  if(cls.includes("python")||cls.includes("py")){const out=document.createElement("pre");out.style.display="none";const b3=document.createElement("button");b3.textContent="▶ Python実行";b3.onclick=async()=>{out.style.display="block";out.textContent="実行中...";const r=await(await api("/api/exec",{method:"POST",body:JSON.stringify({code})})).json();out.textContent=(r.out||"")+(r.err?"\n[ERR]\n"+r.err:"")||"(出力なし)";};bar.append(b3);cb.parentElement.after(bar,out);return;}
+  cb.parentElement.after(bar);
+ });
+}
+function renderMsgs(){
+ msgs.innerHTML="";
+ (chats[cid]?.turns||[]).forEach(t=>{
+  const d=document.createElement("div");d.className="turn";
+  let h=`<div class="q">🧑 ${esc(t.q)} <small style="color:#8b949e">(${t.m})</small></div>`;
+  if(t.s?.length)h+=`<details><summary>🔍 Web検索 (${t.s.length}回)</summary>${t.s.map(x=>`<b>${esc(x.q)}</b><div class="md">${md(x.res)}</div>`).join("<hr>")}</details>`;
+  if(t.r)h+=`<details><summary>🧠 思考プロセス (${t.r.length}字)</summary><div class="md">${md(t.r)}</div></details>`;
+  h+=`<div class="md ans">${md(t.a)}</div><div class="stat">${t.st}</div>`;
+  d.innerHTML=h;enhance(d);msgs.appendChild(d);
+ });
+ msgs.scrollTop=msgs.scrollHeight;
+}
+inp.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}});
+async function send(){
+ const text=inp.value.trim();if(!text||sbtn.disabled)return;
+ if(!cid||!chats[cid])await newChat(true);
+ inp.value="";sbtn.disabled=true;
+ if(!chats[cid].turns.length&&chats[cid].title==="新規チャット")chats[cid].title=text.slice(0,14);
+ renderList();
+ const d=document.createElement("div");d.className="turn";
+ d.innerHTML=`<div class="q">🧑 ${esc(text)}</div><details id="sdet" style="display:none"><summary id="ssum">🔍 Web検索</summary><div id="sbox" class="md"></div></details><details id="rdet" style="display:none"><summary id="rsum">🧠 思考プロセス</summary><div id="rbox" class="md" style="color:#8b949e"></div></details><div class="md ans" id="abox">⏳ 接続中...</div><div class="stat" id="stbox"></div>`;
+ msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight;
+ let rtxt="",atxt="";
+ const res=await api("/api/chat_stream",{method:"POST",body:JSON.stringify({cid,text,model:msel.value,effort:esel.value})});
+ const reader=res.body.getReader(),dec=new TextDecoder();
+ while(true){
+  const{done,value}=await reader.read();if(done)break;
+  for(const line of dec.decode(value).split("\n")){
+   if(!line.startsWith("data: "))continue;
+   const btm=isBottom();
+   const ev=JSON.parse(line.slice(6));
+   if(ev.type==="r"){rtxt+=ev.text;rdet.style.display="block";rsum.textContent=`🧠 思考プロセス (${rtxt.length}字)`;rbox.innerHTML=md(rtxt);if(!atxt)abox.textContent="🧠 思考中...";}
+   else if(ev.type==="c"){atxt+=ev.text;abox.innerHTML=md(atxt);}
+   else if(ev.type==="status"){abox.textContent=ev.msg;}
+   else if(ev.type==="s"){sdet.style.display="block";sbox.innerHTML+=`<b>${esc(ev.q)}</b>${md(ev.res)}<hr>`;}
+   else if(ev.type==="done"){chats[cid].turns.push(ev.turn);renderList();renderMsgs();}
+   else if(ev.type==="err"){abox.textContent="❌ "+ev.msg;}
+   if(btm)msgs.scrollTop=msgs.scrollHeight;
+  }
+ }
+ sbtn.disabled=false;
+}
+async function openAdmin(){
+ document.getElementById("adm-modal").style.display="flex";
+ const us=await(await api("/api/admin/users")).json();
+ ulist.innerHTML=us.map(u=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #30363d"><span>${esc(u.username)} ${u.admin?"👑":u.approved?"✅":"⏳"}</span><div>${!u.approved?`<button onclick="admAct('approve','${u.username}')">許可</button>`:""}${!u.admin?` <button class="del" onclick="admAct('del','${u.username}')">削除</button>`:""}</div></div>`).join("");
+}
+async function admAct(t,u){await api(t==="approve"?`/api/admin/approve/${u}`:`/api/admin/user/${u}`,{method:t==="approve"?"POST":"DELETE"});openAdmin();}
+if(tok){auth.style.display="none";init();}
+</script></body></html>
