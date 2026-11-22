@@ -119,7 +119,7 @@ def exec_py(req: ExecReq, authorization: str = Header("")):
 def chat_stream(req: ChatReq, authorization: str = Header("")):
     u, db = get_user(authorization)
     api_key = (os.getenv("NVIDIA_API_KEY") or "").strip()
-    invoke_url = (os.getenv("NVIDIA_INVOKE_URL") or ("https://" + "nvidia.com" + "/v1/chat/completions")).strip()
+    invoke_url = (os.getenv("NVIDIA_INVOKE_URL") or ("https://" + "integrate.api." + "nvidia.com" + "/v1/chat/completions")).strip()
     if not api_key: raise HTTPException(500, "NVIDIA_API_KEY 未設定")
 
     uchats = db["chats"].setdefault(u, {})
@@ -189,3 +189,4 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
         except Exception as ex: yield f"data: {json.dumps({'type':'err','msg':str(ex)})}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
