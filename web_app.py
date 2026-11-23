@@ -321,7 +321,7 @@ def load_db() -> dict:
                 cur.execute("SELECT v FROM app_kv WHERE k = 'main_db'")
                 row = cur.fetchone()
                 if row:
-                    d = json.loads(row.pop(0))
+                    d = json.loads(next(iter(row)))
                     if "users" in d:
                         d.setdefault("sessions", {})
                         return d
