@@ -13,7 +13,8 @@ DATA_FILE = Path("web_data.json")
 ADMIN_USER, ADMIN_PASS = "sho36", "shoma0121"
 SESSIONS = {}
 
-TOOLS = [\n    {
+TOOLS = [
+    {
         "type": "function",
         "function": {
             "name": "read_url",
@@ -275,7 +276,7 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
                             yield f"data: {json.dumps({'type':'status','msg':f'📖 ページ読込中: {target_url}'})}\n\n"
                             sres = read_url(target_url)
                             logs.append({"q": f"📖 読込: {target_url}", "res": sres[:500] + ("..." if len(sres) > 500 else "")})
-                            yield f"data: {json.dumps({'type':'s','q':f'📖 読込: {target_url}','res':sres[:500] + ('...' if len(sres) > 500 else '')})}\n\n"
+                            yield f"data: {json.dumps({'type':'s','q':f'📖 読込: {target_url}','res':sres[:500] + ("" if len(sres) <= 500 else "...")})}\n\n"
                         elif fname == "get_weather":
                             loc = parsed.get("location") or parsed.get("query") or "Yokohama"
                             yield f"data: {json.dumps({'type':'status','msg':f'☀️ 天気取得中: {loc}'})}\n\n"
@@ -318,6 +319,8 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
             yield f"data: {json.dumps({'type':'err','msg':str(ex)})}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
 
 
 
