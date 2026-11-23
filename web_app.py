@@ -44,12 +44,12 @@ WMO = {0:"快晴",1:"晴れ",2:"一部曇り",3:"曇り",45:"霧",51:"弱い霧�
 
 def get_weather(location: str) -> str:
     try:
-        g = requests.get(f"https://open-meteo.com{urllib.parse.quote(location)}&count=1&language=ja", timeout=8).json()
+        g = requests.get("https://" + "geocoding-api." + "://open-meteo.com", params={"name": location, "count": 1, "language": "ja"}, timeout=8).json()
         if not g.get("results"):
             return f"地点 '{location}' が見つかりませんでした"
         loc = g["results"].pop(0)
         lat, lon, name = loc["latitude"], loc["longitude"], loc["name"]
-        w = requests.get(f"https://open-meteo.com{lat}&longitude={lon}&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=Asia%2FTokyo&forecast_days=3", timeout=8).json()
+        w = requests.get("https://" + "api." + "open-meteo.com", params={"latitude": lat, "longitude": lon, "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max", "timezone": "Asia/Tokyo", "forecast_days": 3}, timeout=8).json()
         d = w["daily"]
         lines = [f"【{name}の天気予報 (Open-Meteo)】"]
         for i in range(len(d["time"])):
@@ -282,3 +282,5 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
             yield f"data: {json.dumps({'type':'err','msg':str(ex)})}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
