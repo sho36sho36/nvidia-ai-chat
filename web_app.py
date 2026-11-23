@@ -1,4 +1,5 @@
-﻿import os, re, json, html, time, uuid, hashlib, secrets, subprocess, tempfile, urllib.parse, xml.etree.ElementTree as ET, requests
+from pypdf import PdfReader
+import os, re, json, html, base64, io, time, uuid, hashlib, secrets, subprocess, tempfile, urllib.parse, xml.etree.ElementTree as ET, requests
 from pathlib import Path
 from datetime import datetime
 from ddgs import DDGS
@@ -194,6 +195,33 @@ def search_arxiv(query: str) -> str:
     except Exception as e:
         return f"arXiv検索エラー: {e}"
 
+def parse_document(name: str, b64_data: str) -> str:
+    try:
+        raw_b64 = b64_data.split(",", 1)[-1]
+        raw_bytes = base64.b64decode(raw_b64)
+        ext = os.path.splitext(name.lower())[1]
+        if ext == ".pdf":
+            reader = PdfReader(io.BytesIO(raw_bytes))
+            pages = []
+            for idx, page in enumerate(reader.pages):
+                txt = (page.extract_text() or "").strip()
+                if txt:
+                    pages.append(f"--- Page {idx+1} ---\n{txt}")
+            full_txt = "\n\n".join(pages)
+            return f"【添付PDFファイル: {name} (全{len(reader.pages)}ページ)】\n\n{full_txt[:25000]}"
+        else:
+            for enc in ("utf-8", "cp932", "shift_jis", "latin-1"):
+                try:
+                    txt = raw_bytes.decode(enc)
+                    break
+                except Exception:
+                    txt = ""
+            if not txt:
+                return f"【添付ファイル: {name}】テキストをデコードできませんでした。"
+            return f"【添付ファイル: {name}】\n```{ext.lstrip('.')}\n{txt[:25000]}\n```"
+    except Exception as e:
+        return f"【添付ファイル読込エラー ({name})】: {e}"
+
 def run_python_tool(code: str) -> str:
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
         f.write(code)
@@ -293,6 +321,8 @@ class ChatReq(BaseModel):
     model: str
     effort: str
     image: str = ''
+    doc_name: str = ''
+    doc_data: str = ''
 class ExecReq(BaseModel): code: str
 
 @app.get("/", response_class=HTMLResponse)
@@ -364,17 +394,22 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
     uchats = db["chats"].setdefault(u, {})
     sys_p = f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを、複雑な計算や数値検証・日付計算が必要な場合は run_python ツールを、用語や人物の定義は search_wikipedia を、学術論文や最新AI研究は search_arxiv ツールを、株価・為替・暗号資産の現在価格は get_market_data ツールを必ず呼び出して日本語で回答してください。"
     cobj = uchats.setdefault(req.cid, {"title": req.text[:14], "msgs": [{"role": "system", "content": sys_p}], "turns": []})
+    doc_prefix = ""
+    if req.doc_name and req.doc_data:
+        doc_prefix = parse_document(req.doc_name, req.doc_data) + "\n\n【ユーザーの指示】\n"
+    actual_text = doc_prefix + (req.text or ("このドキュメントの内容を分かりやすく要約・解析してください。" if req.doc_name else ""))
+
     if req.image:
         v_models = ("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "google/paligemma")
         if req.model not in v_models:
             req.model = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
         u_content = [
-            {"type": "text", "text": req.text or "この画像について詳しく説明してください。"},
+            {"type": "text", "text": actual_text or "この画像について詳しく説明してください。"},
             {"type": "image_url", "image_url": {"url": req.image}}
         ]
         cobj["msgs"].append({"role": "user", "content": u_content})
     else:
-        cobj["msgs"].append({"role": "user", "content": req.text})
+        cobj["msgs"].append({"role": "user", "content": actual_text})
 
     def gen():
         hdr = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "text/event-stream"}
@@ -513,7 +548,8 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
 
             dt = time.perf_counter() - t0
             st = f"📊 入力:{pt} | 出力:{ct} | ⏱ 思考:{max(tn-ta,0.0) if tn else 0.0:.1f}s | 総:{dt:.2f}s | ⚡ {ct/max(dt-ta,0.01):.1f} tok/s"
-            turn = {"q": ("[🖼️ 画像添付] " + req.text).strip() if req.image else req.text, "img": req.image, "a": ans, "r": rall.strip(), "s": logs, "m": f"{req.model.split('/')[-1]}|{req.effort}", "st": st}
+            q_label = (f"[📄 {req.doc_name}] " if req.doc_name else "") + ("[🖼️ 画像添付] " if req.image else "") + req.text
+            turn = {"q": q_label.strip(), "img": req.image, "a": ans, "r": rall.strip(), "s": logs, "m": f"{req.model.split('/')[-1]}|{req.effort}", "st": st}
             cobj["turns"].append(turn)
             save_db(db)
             yield f"data: {json.dumps({'type':'done','turn':turn})}\n\n"

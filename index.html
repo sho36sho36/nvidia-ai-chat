@@ -43,7 +43,7 @@ textarea{flex:1;resize:none;height:54px}
   #bot{padding:8px;gap:6px}
   textarea{font-size:16px;height:46px}
   #sbtn{padding:0 14px}
-}#img-bar{display:none;padding:6px 12px;background:#161b22;border-top:1px solid #30363d;align-items:center;gap:10px}#img-prev{max-height:64px;border-radius:6px;border:1px solid #58a6ff}.q-img{max-width:240px;max-height:200px;border-radius:8px;margin-top:6px;display:block;border:1px solid #30363d}</style></head><body>
+}#img-bar{display:none;padding:6px 12px;background:#161b22;border-top:1px solid #30363d;align-items:center;gap:10px}#img-prev{max-height:64px;border-radius:6px;border:1px solid #58a6ff}.q-img{max-width:240px;max-height:200px;border-radius:8px;margin-top:6px;display:block;border:1px solid #30363d}#doc-bar{display:none;padding:6px 12px;background:#161b22;border-top:1px solid #30363d;align-items:center;gap:10px;font-size:13px;color:#79c0ff}</style></head><body>
 <div id="auth"><div class="box"><h3>🔐 NVIDIA AI ログイン</h3>
 <input id="au" placeholder="ユーザー名" style="width:100%;margin-bottom:8px">
 <input id="ap" type="password" placeholder="パスワード" style="width:100%;margin-bottom:12px">
@@ -58,8 +58,22 @@ textarea{flex:1;resize:none;height:54px}
 <button id="adm-btn" class="sec" style="display:none" onclick="openAdmin()">👑 ユーザー管理</button>
 <button class="sec" onclick="logout()" style="margin-left:auto">ログアウト</button></div>
 <div id="msgs"></div>
-<div id="img-bar"><img id="img-prev"><span style="font-size:12px;color:#8b949e">画像を添付中</span><button class="del" style="padding:4px 8px;font-size:12px" onclick="clearImg()">✕ 解除</button></div><div id="bot"><input type="file" id="img-file" accept="image/*" style="display:none" onchange="handleImg(this.files.item(0))"><button class="sec" onclick="document.getElementById('img-file').click()" title="画像を添付">🖼️</button><textarea id="inp" placeholder="質問を入力 (Shift+Enterで改行 / Enterで送信)"></textarea><button id="sbtn" onclick="send()">送信</button></div></div>
+<div id="doc-bar"><span id="doc-name"></span><button class="del" style="padding:4px 8px;font-size:12px" onclick="clearDoc()">✕ 解除</button></div><div id="img-bar"><img id="img-prev"><span style="font-size:12px;color:#8b949e">画像を添付中</span><button class="del" style="padding:4px 8px;font-size:12px" onclick="clearImg()">✕ 解除</button></div><div id="bot"><input type="file" id="img-file" accept="image/*" style="display:none" onchange="handleImg(this.files.item(0))"><button class="sec" onclick="document.getElementById('img-file').click()" title="画像を添付">🖼️</button><input type="file" id="doc-file" accept=".pdf,.csv,.tsv,.json,.txt,.md,.py,.js,.ts,.html,.css,.java,.c,.cpp,.go,.rs,.sql,.yaml,.yml,.xml,.log" style="display:none" onchange="handleDoc(this.files.item(0))"><button class="sec" onclick="document.getElementById('doc-file').click()" title="PDF/CSV/コードを添付">📄</button><textarea id="inp" placeholder="質問を入力 (Shift+Enterで改行 / Enterで送信)"></textarea><button id="sbtn" onclick="send()">送信</button></div></div>
 <script>
+let pendingDocName="",pendingDocData="";
+function clearDoc(){pendingDocName="";pendingDocData="";document.getElementById("doc-bar").style.display="none";document.getElementById("doc-file").value="";}
+function handleDoc(file){
+ if(!file)return;
+ if(file.size>10*1024*1024){alert("10MB以下のファイルを選択してください");return;}
+ const r=new FileReader();
+ r.onload=e=>{
+  pendingDocName=file.name;
+  pendingDocData=e.target.result;
+  document.getElementById("doc-name").textContent="📄 添付中: "+file.name;
+  document.getElementById("doc-bar").style.display="flex";
+ };
+ r.readAsDataURL(file);
+}
 let pendingImg="";
 function clearImg(){pendingImg="";document.getElementById("img-bar").style.display="none";document.getElementById("img-file").value="";}
 function handleImg(file){
@@ -184,16 +198,16 @@ function renderMsgs(){
 }
 inp.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}});
 async function send(){
- const text=inp.value.trim();const imgData=pendingImg;if((!text&&!imgData)||sbtn.disabled)return;clearImg();
+ const text=inp.value.trim();const imgData=pendingImg;const dName=pendingDocName;const dData=pendingDocData;if((!text&&!imgData&&!dData)||sbtn.disabled)return;clearImg();clearDoc();
  if(!cid||!chats[cid])await newChat(true);
  inp.value="";sbtn.disabled=true;
  if(!chats[cid].turns.length&&chats[cid].title==="新規チャット")chats[cid].title=text.slice(0,14);
  renderList();
  const d=document.createElement("div");d.className="turn";
- d.innerHTML=`<div class="q">🧑 ${esc(text||"[🖼️ 画像添付]")}${imgData?`<img class="q-img" src="${imgData}">`:""}</div><details id="sdet" style="display:none"><summary id="ssum">🔍 Web検索</summary><div id="sbox" class="md"></div></details><details id="rdet" style="display:none"><summary id="rsum">🧠 思考プロセス</summary><div id="rbox" class="md" style="color:#8b949e"></div></details><div class="md ans" id="abox">⏳ 接続中...</div><div class="stat" id="stbox"></div>`;
+ d.innerHTML=`<div class="q">🧑 ${esc((dName?"[📄 "+dName+"] ":"")+(text||(imgData?"[🖼️ 画像添付]":"")))}${imgData?`<img class="q-img" src="${imgData}">`:""}</div><details id="sdet" style="display:none"><summary id="ssum">🔍 Web検索</summary><div id="sbox" class="md"></div></details><details id="rdet" style="display:none"><summary id="rsum">🧠 思考プロセス</summary><div id="rbox" class="md" style="color:#8b949e"></div></details><div class="md ans" id="abox">⏳ 接続中...</div><div class="stat" id="stbox"></div>`;
  msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight;
  let rtxt="",atxt="";
- const res=await api("/api/chat_stream",{method:"POST",body:JSON.stringify({cid,text,model:msel.value,effort:esel.value,image:imgData})});
+ const res=await api("/api/chat_stream",{method:"POST",body:JSON.stringify({cid,text,model:msel.value,effort:esel.value,image:imgData,doc_name:dName,doc_data:dData})});
  const reader=res.body.getReader(),dec=new TextDecoder();
  while(true){
   const{done,value}=await reader.read();if(done)break;
