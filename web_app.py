@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import datetime
 from ddgs import DDGS
 from fastapi import FastAPI, HTTPException, Header
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 
@@ -429,6 +429,39 @@ def exec_py(req: ExecReq, authorization: str = Header("")):
     except Exception as e: return {"out": "", "err": str(e), "code": -1}
     finally:
         if os.path.exists(path): os.unlink(path)
+class TtsReq(BaseModel):
+    text: str
+    voice: str = "Magpie-ZeroShot.Female-1"
+
+@app.post("/api/tts")
+def tts_api(req: TtsReq, authorization: str = Header("")):
+    get_user(authorization)
+    txt = req.text.strip()[:1200]
+    if not txt:
+        raise HTTPException(400, "テキストが空です")
+    api_key = (os.getenv("NVIDIA_API_KEY") or "").strip()
+    if not api_key:
+        raise HTTPException(500, "NVIDIA_API_KEY が未設定です")
+    tts_url = (os.getenv("TTS_API_URL") or ("https://" + ".".join(["integrate", "api", "nvidia", "com"]) + "/v1/audio/speech")).strip()
+    hdr = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "audio/wav, audio/mpeg, */*"}
+    pay = {
+        "model": "nvidia/magpie-tts-zeroshot",
+        "input": txt,
+        "voice": req.voice,
+        "language": "ja-JP",
+        "response_format": "wav"
+    }
+    try:
+        r = requests.post(tts_url, headers=hdr, json=pay, timeout=30)
+        if r.status_code == 200 and r.content:
+            ctype = r.headers.get("Content-Type") or "audio/wav"
+            return Response(content=r.content, media_type=ctype)
+        raise HTTPException(r.status_code, f"Magpie TTS Error ({r.status_code}): {r.text[:200]}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"TTS接続エラー: {e}")
+
 @app.post("/api/chat_stream")
 def chat_stream(req: ChatReq, authorization: str = Header("")):
     u, db = get_user(authorization)

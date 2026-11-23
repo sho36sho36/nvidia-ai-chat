@@ -76,20 +76,39 @@ function cleanForSpeech(t){
   .replace(/https?:\/\/\S+/g,"リンク")
   .replace(/\s+/g," ").trim();
 }
-function speakText(btn,raw){
- if(!window.speechSynthesis){alert("このブラウザは音声読み上げに非対応です");return;}
- if(speechSynthesis.speaking){
-  speechSynthesis.cancel();
-  if(btn&&btn.dataset.playing==="1"){btn.dataset.playing="0";btn.textContent="🔊 読み上げ";return;}
- }
+let curAudio=null,curTtsBtn=null;
+function stopAllAudio(){
+ if(curAudio){curAudio.pause();curAudio=null;}
+ if(window.speechSynthesis)speechSynthesis.cancel();
+ if(curTtsBtn){curTtsBtn.dataset.playing="0";curTtsBtn.textContent="🔊 読み上げ";curTtsBtn=null;}
+}
+async function speakText(btn,raw){
+ const wasPlaying=(btn&&btn.dataset.playing==="1");
+ stopAllAudio();
+ if(wasPlaying)return;
  const txt=cleanForSpeech(raw);if(!txt)return;
- const u=new SpeechSynthesisUtterance(txt);
- u.lang="ja-JP";u.rate=1.05;
- const vs=speechSynthesis.getVoices();
- const jp=vs.find(v=>v.lang.includes("ja")&&(v.name.includes("Google")||v.name.includes("Nanami")||v.name.includes("Microsoft")));
- if(jp)u.voice=jp;
- if(btn){btn.dataset.playing="1";btn.textContent="⏹ 停止";u.onend=u.onerror=()=>{btn.dataset.playing="0";btn.textContent="🔊 読み上げ";};}
- speechSynthesis.speak(u);
+ if(btn){btn.dataset.playing="1";btn.textContent="⏳ 生成中...";curTtsBtn=btn;}
+ try{
+  const r=await api("/api/tts",{method:"POST",body:JSON.stringify({text:txt,voice:"Magpie-ZeroShot.Female-1"})});
+  if(!r.ok){
+   const err=await r.text();
+   console.warn("Magpie TTS Fallback:",err);
+   throw new Error(err);
+  }
+  const blob=await r.blob();
+  const url=URL.createObjectURL(blob);
+  curAudio=new Audio(url);
+  if(btn)btn.textContent="⏹ 停止";
+  curAudio.onended=curAudio.onerror=()=>{URL.revokeObjectURL(url);stopAllAudio();};
+  await curAudio.play();
+ }catch(e){
+  if(window.speechSynthesis){
+   const u=new SpeechSynthesisUtterance(txt);u.lang="ja-JP";u.rate=1.05;
+   if(btn)btn.textContent="⏹ 停止(標準)";
+   u.onend=u.onerror=()=>stopAllAudio();
+   speechSynthesis.speak(u);
+  }else{stopAllAudio();}
+ }
 }
 if(window.speechSynthesis)speechSynthesis.onvoiceschanged=()=>speechSynthesis.getVoices();
 function toggleMic(){
