@@ -11,8 +11,26 @@ from pydantic import BaseModel
 app = FastAPI()
 app.add_middleware(GZipMiddleware, minimum_size=500)
 DATA_FILE = Path("web_data.json")
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 ADMIN_USER, ADMIN_PASS = "sho36", "shoma0121"
 SESSIONS = {}
+
+def _pg_conn():
+    import psycopg2
+    url = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    return psycopg2.connect(url)
+
+def _init_pg():
+    if not DATABASE_URL:
+        return
+    try:
+        with _pg_conn() as conn, conn.cursor() as cur:
+            cur.execute("CREATE TABLE IF NOT EXISTS app_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
+            conn.commit()
+    except Exception as e:
+        print("PG Init Error:", e)
+
+_init_pg()
 
 TOOLS = [
     {
@@ -297,21 +315,49 @@ def h_pw(pw: str) -> str:
     return hashlib.sha256(f"nv_salt_{pw}".encode()).hexdigest()
 
 def load_db() -> dict:
-    if DATA_FILE.exists():
+    if DATABASE_URL:
+        try:
+            with _pg_conn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT v FROM app_kv WHERE k = 'main_db'")
+                row = cur.fetchone()
+                if row:
+                    d = json.loads(row.pop(0))
+                    if "users" in d:
+                        d.setdefault("sessions", {})
+                        return d
+        except Exception as e:
+            print("PG Load Error:", e)
+    elif DATA_FILE.exists():
         try:
             d = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-            if "users" in d: return d
-        except Exception: pass
-    db = {"users": {ADMIN_USER: {"pw": h_pw(ADMIN_PASS), "approved": True, "admin": True}}, "chats": {}}
-    save_db(db); return db
+            if "users" in d:
+                d.setdefault("sessions", {})
+                return d
+        except Exception:
+            pass
+    db = {"users": {ADMIN_USER: {"pw": h_pw(ADMIN_PASS), "approved": True, "admin": True}}, "chats": {}, "sessions": {}}
+    save_db(db)
+    return db
 
 def save_db(db: dict):
+    db.setdefault("sessions", {})
+    raw = json.dumps(db, ensure_ascii=False)
+    if DATABASE_URL:
+        try:
+            with _pg_conn() as conn, conn.cursor() as cur:
+                cur.execute("INSERT INTO app_kv (k, v) VALUES ('main_db', %s) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v", (raw,))
+                conn.commit()
+            return
+        except Exception as e:
+            print("PG Save Error:", e)
     DATA_FILE.write_text(json.dumps(db, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def get_user(token: str):
-    u = SESSIONS.get(token); db = load_db()
+    db = load_db()
+    u = SESSIONS.get(token) or db.get("sessions", {}).get(token)
     if not u or u not in db["users"] or not db["users"][u]["approved"]:
         raise HTTPException(401, "未ログインまたは未承認です")
+    SESSIONS[token] = u
     return u, db
 
 class AuthReq(BaseModel): username: str; password: str
@@ -343,7 +389,7 @@ def login(req: AuthReq):
     db = load_db(); u = db["users"].get(req.username.strip())
     if not u or u["pw"] != h_pw(req.password.strip()): raise HTTPException(401, "名前またはパスワード違い")
     if not u["approved"]: raise HTTPException(403, "管理者の承認待ちです")
-    tok = secrets.token_hex(24); SESSIONS[tok] = req.username.strip()
+    tok = secrets.token_hex(24); uname = req.username.strip(); SESSIONS[tok] = uname; db.setdefault("sessions", {})[tok] = uname; save_db(db)
     return {"token": tok, "username": req.username.strip(), "admin": u["admin"]}
 
 @app.get("/api/admin/users")
