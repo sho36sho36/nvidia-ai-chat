@@ -1,4 +1,4 @@
-﻿import os, re, json, time, uuid, hashlib, secrets, subprocess, tempfile, urllib.parse, xml.etree.ElementTree as ET, requests
+﻿import os, re, json, html, time, uuid, hashlib, secrets, subprocess, tempfile, urllib.parse, xml.etree.ElementTree as ET, requests
 from pathlib import Path
 from datetime import datetime
 from ddgs import DDGS
@@ -13,7 +13,18 @@ DATA_FILE = Path("web_data.json")
 ADMIN_USER, ADMIN_PASS = "sho36", "shoma0121"
 SESSIONS = {}
 
-TOOLS = [
+TOOLS = [\n    {
+        "type": "function",
+        "function": {
+            "name": "read_url",
+            "description": "指定されたURL（https://...）のWebページにアクセスし、記事やドキュメントの本文テキストを取得して読む。ユーザーがURLを提示した時や検索結果の詳細を読む時に使う。",
+            "parameters": {
+                "type": "object",
+                "properties": {"url": {"type": "string", "description": "読み込むWebページのURL"}},
+                "required": ["url"]
+            }
+        }
+    },
     {
         "type": "function",
         "function": {
@@ -42,6 +53,25 @@ TOOLS = [
 
 WMO = {0:"快晴",1:"晴れ",2:"一部曇り",3:"曇り",45:"霧",51:"弱い霧雨",53:"霧雨",61:"弱い雨",63:"雨",65:"強い雨",71:"弱い雪",73:"雪",75:"強い雪",80:"にわか雨",95:"雷雨"}
 
+def read_url(url: str) -> str:
+    try:
+        if not url.startswith(("http://", "https://")):
+            return "エラー: httpまたはhttpsのURLを指定してください"
+        r = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        r.encoding = r.apparent_encoding or "utf-8"
+        if r.status_code != 200:
+            return f"HTTPエラー: ステータスコード {r.status_code}"
+        raw = r.text
+        title_m = re.search(r"<title[^>]*>(.*?)</title>", raw, flags=re.I | re.S)
+        title = html.unescape(re.sub(r"<[^>]+>", "", title_m.group(1))).strip() if title_m else "タイトルなし"
+        body = re.sub(r"<(script|style|nav|header|footer|aside|noscript)[^>]*>.*?</\1>", " ", raw, flags=re.I | re.S)
+        body = re.sub(r"<[^>]+>", " ", body)
+        body = re.sub(r"\s+", " ", html.unescape(body)).strip()
+        if not body:
+            return "本文テキストを抽出できませんでした（JavaScript専用ページの可能性があります）"
+        return f"【ページタイトル: {title}】\nURL: {url}\n\n{body[:7000]}"
+    except Exception as e:
+        return f"ページ読込エラー: {e}"
 def get_weather(location: str) -> str:
     try:
         g = requests.get("https://" + ".".join(["geocoding-api", "open-meteo", "com"]) + "/v1/search", params={"name": location, "count": 1, "language": "ja"}, timeout=8).json()
@@ -169,7 +199,7 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
         raise HTTPException(500, "NVIDIA_API_KEY 未設定")
 
     uchats = db["chats"].setdefault(u, {})
-    sys_p = f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを必ず呼び出して日本語で回答してください。"
+    sys_p = f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを必ず呼び出して日本語で回答してください。"
     cobj = uchats.setdefault(req.cid, {"title": req.text[:14], "msgs": [{"role": "system", "content": sys_p}], "turns": []})
     cobj["msgs"].append({"role": "user", "content": req.text})
 
@@ -240,7 +270,13 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
                             parsed = {"query": raw_args, "location": raw_args}
                             clean_args = json.dumps(parsed, ensure_ascii=False)
 
-                        if fname == "get_weather":
+                        if fname == "read_url":
+                            target_url = parsed.get("url") or parsed.get("query") or raw_args
+                            yield f"data: {json.dumps({'type':'status','msg':f'📖 ページ読込中: {target_url}'})}\n\n"
+                            sres = read_url(target_url)
+                            logs.append({"q": f"📖 読込: {target_url}", "res": sres[:500] + ("..." if len(sres) > 500 else "")})
+                            yield f"data: {json.dumps({'type':'s','q':f'📖 読込: {target_url}','res':sres[:500] + ('...' if len(sres) > 500 else '')})}\n\n"
+                        elif fname == "get_weather":
                             loc = parsed.get("location") or parsed.get("query") or "Yokohama"
                             yield f"data: {json.dumps({'type':'status','msg':f'☀️ 天気取得中: {loc}'})}\n\n"
                             sres = get_weather(loc)
@@ -282,6 +318,7 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
             yield f"data: {json.dumps({'type':'err','msg':str(ex)})}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
 
 
 
