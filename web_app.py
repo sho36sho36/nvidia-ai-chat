@@ -431,7 +431,7 @@ def exec_py(req: ExecReq, authorization: str = Header("")):
         if os.path.exists(path): os.unlink(path)
 class TtsReq(BaseModel):
     text: str
-    voice_id: str = "2b568345-1d48-4047-b25f-7bacc0042eba"
+    voice_id: str = "7ca2afba-a719-4f06-9af2-ea2b8e3cf14c"
 
 @app.post("/api/tts")
 def tts_api(req: TtsReq, authorization: str = Header("")):
@@ -443,23 +443,27 @@ def tts_api(req: TtsReq, authorization: str = Header("")):
     if not c_key:
         raise HTTPException(500, "CARTESIA_API_KEY 未設定")
     vid = (os.getenv("CARTESIA_VOICE_ID") or req.voice_id).strip()
-    url = "https://" + "api.cartesia.ai" + "/tts/bytes"
-    hdr = {
-        "X-API-Key": c_key,
-        "Cartesia-Version": "2025-04-16",
-        "Content-Type": "application/json"
-    }
-    pay = {
-        "model_id": "sonic-3",
-        "transcript": txt,
-        "voice": {"mode": "id", "id": vid},
-        "language": "ja",
-        "output_format": {"container": "mp3", "bit_rate": 128000, "sample_rate": 44100}
-    }
-    r = requests.post(url, headers=hdr, json=pay, timeout=30)
-    if r.status_code == 200 and r.content:
-        return Response(content=r.content, media_type="audio/mpeg")
-    raise HTTPException(r.status_code, f"Cartesia TTS Error: {r.text[:150]}")
+    from cartesia import Cartesia
+    client = Cartesia(api_key=c_key, base_url="https://" + "api.cartesia.ai")
+    resp = client.tts.generate(
+        model_id="sonic-3.6",
+        transcript=txt,
+        voice=vid,
+        language="ja",
+        output_format={
+            "container": "wav",
+            "encoding": "pcm_s16le",
+            "sample_rate": 44100
+        },
+        generation_config={
+            "speed": 1,
+            "volume": 1
+        }
+    )
+    audio_data = b"".join(resp) if not isinstance(resp, (bytes, bytearray)) else bytes(resp)
+    if audio_data:
+        return Response(content=audio_data, media_type="audio/wav")
+    raise HTTPException(500, "Cartesia音声データが空です")
 
 @app.post("/api/chat_stream")
 def chat_stream(req: ChatReq, authorization: str = Header("")):
