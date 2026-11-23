@@ -431,40 +431,7 @@ def exec_py(req: ExecReq, authorization: str = Header("")):
         if os.path.exists(path): os.unlink(path)
 class TtsReq(BaseModel):
     text: str
-    voice: str = "Magpie-ZeroShot.Female-1"
-
-@app.post("/api/tts")
-def tts_api(req: TtsReq, authorization: str = Header("")):
-    get_user(authorization)
-    txt = req.text.strip()[:1200]
-    if not txt:
-        raise HTTPException(400, "テキストが空です")
-    api_key = (os.getenv("NVIDIA_API_KEY") or "").strip()
-    if not api_key:
-        raise HTTPException(500, "NVIDIA_API_KEY が未設定です")
-    tts_url = (os.getenv("TTS_API_URL") or ("https://" + ".".join(["integrate", "api", "nvidia", "com"]) + "/v1/audio/speech")).strip()
-    hdr = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "audio/wav, audio/mpeg, */*"}
-    pay = {
-        "model": "nvidia/magpie-tts-zeroshot",
-        "input": txt,
-        "voice": req.voice,
-        "language": "ja-JP",
-        "response_format": "wav"
-    }
-    try:
-        r = requests.post(tts_url, headers=hdr, json=pay, timeout=30)
-        if r.status_code == 200 and r.content:
-            ctype = r.headers.get("Content-Type") or "audio/wav"
-            return Response(content=r.content, media_type=ctype)
-        raise HTTPException(r.status_code, f"Magpie TTS Error ({r.status_code}): {r.text[:200]}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"TTS接続エラー: {e}")
-
-class TtsReq(BaseModel):
-    text: str
-    voice_id: str = "JBFqnCBsd6RMkjVDRZzb"
+    voice_id: str = "2b568345-1d48-4047-b25f-7bacc0042eba"
 
 @app.post("/api/tts")
 def tts_api(req: TtsReq, authorization: str = Header("")):
@@ -472,33 +439,27 @@ def tts_api(req: TtsReq, authorization: str = Header("")):
     txt = req.text.strip()[:1500]
     if not txt:
         raise HTTPException(400, "empty")
-    el_key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
-    if not el_key:
-        raise HTTPException(500, "ELEVENLABS_API_KEY 未設定")
-    vid = (os.getenv("ELEVENLABS_VOICE_ID") or req.voice_id).strip()
-    url = "https://" + "api.elevenlabs.io" + "/v1/text-to-speech/" + vid
-    hdr = {"xi-api-key": el_key, "Content-Type": "application/json", "Accept": "audio/mpeg"}
-    pay = {"text": txt, "model_id": "eleven_flash_v2_5"}
+    c_key = (os.getenv("CARTESIA_API_KEY") or "").strip()
+    if not c_key:
+        raise HTTPException(500, "CARTESIA_API_KEY 未設定")
+    vid = (os.getenv("CARTESIA_VOICE_ID") or req.voice_id).strip()
+    url = "https://" + "api.cartesia.ai" + "/tts/bytes"
+    hdr = {
+        "X-API-Key": c_key,
+        "Cartesia-Version": "2025-04-16",
+        "Content-Type": "application/json"
+    }
+    pay = {
+        "model_id": "sonic-3",
+        "transcript": txt,
+        "voice": {"mode": "id", "id": vid},
+        "language": "ja",
+        "output_format": {"container": "mp3", "bit_rate": 128000, "sample_rate": 44100}
+    }
     r = requests.post(url, headers=hdr, json=pay, timeout=30)
     if r.status_code == 200 and r.content:
         return Response(content=r.content, media_type="audio/mpeg")
-    raise HTTPException(r.status_code, f"ElevenLabs TTS Error: {r.text[:150]}")
-
-@app.post("/api/stt")
-async def stt_api(file: UploadFile = File(...), authorization: str = Header("")):
-    get_user(authorization)
-    el_key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
-    if not el_key:
-        raise HTTPException(500, "ELEVENLABS_API_KEY 未設定")
-    audio_bytes = await file.read()
-    url = "https://" + "api.elevenlabs.io" + "/v1/speech-to-text"
-    hdr = {"xi-api-key": el_key}
-    files = {"file": (file.filename or "audio.webm", audio_bytes, file.content_type or "audio/webm")}
-    data = {"model_id": "scribe_v1", "language_code": "jpn"}
-    r = requests.post(url, headers=hdr, files=files, data=data, timeout=30)
-    if r.status_code == 200:
-        return {"text": r.json().get("text", "")}
-    raise HTTPException(r.status_code, f"ElevenLabs STT Error: {r.text[:150]}")
+    raise HTTPException(r.status_code, f"Cartesia TTS Error: {r.text[:150]}")
 
 @app.post("/api/chat_stream")
 def chat_stream(req: ChatReq, authorization: str = Header("")):

@@ -97,7 +97,7 @@ async function speakText(btn,raw){
   curAudio.onended=curAudio.onerror=()=>{URL.revokeObjectURL(url);stopAllAudio();};
   await curAudio.play();
  }catch(e){
-  console.warn("ElevenLabs TTS fallback:",e);
+  console.warn("Cartesia TTS fallback:",e);
   if(window.speechSynthesis){
    const u=new SpeechSynthesisUtterance(txt);u.lang="ja-JP";u.rate=1.05;
    if(btn)btn.textContent="⏹ 停止(標準)";
@@ -106,42 +106,26 @@ async function speakText(btn,raw){
   }else{stopAllAudio();}
  }
 }
-async function toggleMic(){
+let recog=null;
+function toggleMic(){
+ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!SR){alert("このブラウザは音声認識に非対応です（Chrome / Edge / Safari推奨）");return;}
  const btn=document.getElementById("mic-btn");
- if(isRec&&mediaRec){
-  mediaRec.stop();
-  return;
- }
- try{
-  const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-  audioChunks=[];
-  mediaRec=new MediaRecorder(stream);
-  mediaRec.ondataavailable=e=>{if(e.data.size>0)audioChunks.push(e.data);};
-  mediaRec.onstart=()=>{isRec=true;btn.classList.add("rec");btn.textContent="🔴";};
-  mediaRec.onstop=async()=>{
-   isRec=false;btn.classList.remove("rec");btn.textContent="⏳";
-   stream.getTracks().forEach(t=>t.stop());
-   const blob=new Blob(audioChunks,{type:mediaRec.mimeType||"audio/webm"});
-   const fd=new FormData();
-   fd.append("file",blob,"voice.webm");
-   try{
-    const r=await fetch("/api/stt",{method:"POST",headers:{"Authorization":tok},body:fd});
-    const d=await r.json();
-    if(r.ok&&d.text){
-     inp.value=(inp.value?(inp.value+" "):"")+d.text.trim();
-    }else{
-     alert("音声認識エラー: "+(d.detail||"変換失敗"));
-    }
-   }catch(err){
-    alert("通信エラー: "+err);
-   }finally{
-    btn.textContent="🎤";inp.focus();
-   }
-  };
-  mediaRec.start();
- }catch(err){
-  alert("マイクの使用が許可されていません: "+err);
- }
+ if(isRec&&recog){recog.stop();return;}
+ recog=new SR();recog.lang="ja-JP";recog.interimResults=true;recog.continuous=false;
+ const base=inp.value?(inp.value+" "):"";
+ recog.onstart=()=>{isRec=true;btn.classList.add("rec");btn.textContent="🔴";};
+ recog.onresult=e=>{
+  let interim="",final="";
+  for(let i=e.resultIndex;i<e.results.length;i++){
+   if(e.results.item(i).isFinal)final+=e.results.item(i).item(0).transcript;
+   else interim+=e.results.item(i).item(0).transcript;
+  }
+  inp.value=base+final+interim;
+ };
+ recog.onend=()=>{isRec=false;btn.classList.remove("rec");btn.textContent="🎤";inp.focus();};
+ recog.onerror=()=>{isRec=false;btn.classList.remove("rec");btn.textContent="🎤";};
+ recog.start();
 }
 let pendingDocName="",pendingDocData="";
 function clearDoc(){pendingDocName="";pendingDocData="";document.getElementById("doc-bar").style.display="none";document.getElementById("doc-file").value="";}
