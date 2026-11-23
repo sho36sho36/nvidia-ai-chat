@@ -17,6 +17,33 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "search_wikipedia",
+            "description": "人物、歴史、用語、科学技術、作品などの正確な定義や概要をWikipedia公式APIから検索して取得する。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "検索したい単語や人物名・用語"},
+                    "lang": {"type": "string", "description": "言語コード（通常は ja、英語記事なら en）"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_arxiv",
+            "description": "AI、機械学習、数学、物理学、コンピュータサイエンスなどの最新学術論文をarXiv公式APIで検索し、タイトル・著者・要旨・PDFリンクを取得する。",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "英語の論文検索キーワード（例: Transformer, LLM reasoning, quantum error correction）"}},
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "run_python",
             "description": "複雑な数学計算、統計処理、日付・曜日計算、シミュレーション、アルゴリズムの検証のためにPythonコードを実行し、標準出力を取得する。必ずprint()で結果を出力すること。",
             "parameters": {
@@ -65,6 +92,52 @@ TOOLS = [
 ]
 
 WMO = {0:"快晴",1:"晴れ",2:"一部曇り",3:"曇り",45:"霧",51:"弱い霧雨",53:"霧雨",61:"弱い雨",63:"雨",65:"強い雨",71:"弱い雪",73:"雪",75:"強い雪",80:"にわか雨",95:"雷雨"}
+
+def search_wikipedia(query: str, lang: str = "ja") -> str:
+    lg = "en" if str(lang).lower().startswith("en") else "ja"
+    hdr = {"User-Agent": "NvidiaChatAgent/1.0 (https://github.com)"}
+    try:
+        api_base = "https://" + lg + "." + ".".join(["wikipedia", "org", "w", "api.php"])
+        r = requests.get(api_base, params={"action": "query", "list": "search", "srsearch": query, "format": "json", "srlimit": 3}, headers=hdr, timeout=8).json()
+        hits = (r.get("query") or {}).get("search") or []
+        if not hits and lg == "ja":
+            return search_wikipedia(query, "en")
+        if not hits:
+            return f"Wikipediaで '{query}' に一致する記事が見つかりませんでした。"
+        out = [f"【Wikipedia検索結果 ({lg}): {query}】"]
+        for h in hits:
+            title = h["title"]
+            sum_url = "https://" + lg + "." + ".".join(["wikipedia", "org", "api", "rest_v1", "page", "summary"]) + "/" + urllib.parse.quote(title)
+            sr = requests.get(sum_url, headers=hdr, timeout=8).json()
+            extract = sr.get("extract") or re.sub(r"<[^>]+>", "", h.get("snippet", ""))
+            page_url = ((sr.get("content_urls") or {}).get("desktop") or {}).get("page") or f"https://{lg}.wikipedia.org/wiki/{urllib.parse.quote(title)}"
+            out.append(f"- **[{title}]({page_url})**: {extract}")
+        return "\n\n".join(out)
+    except Exception as e:
+        return f"Wikipedia検索エラー: {e}"
+
+def search_arxiv(query: str) -> str:
+    try:
+        arxiv_url = "http://" + ".".join(["export", "arxiv", "org", "api", "query"])
+        r = requests.get(arxiv_url, params={"search_query": f"all:{query}", "start": 0, "max_results": 4, "sortBy": "submittedDate", "sortOrder": "descending"}, timeout=12)
+        if r.status_code != 200:
+            return f"arXiv APIエラー: {r.status_code}"
+        root = ET.fromstring(r.text)
+        ns = {"a": "http://w3.org"}
+        entries = root.findall("a:entry", ns)
+        if not entries:
+            return f"arXivで '{query}' に一致する論文が見つかりませんでした。"
+        out = [f"【arXiv最新論文検索結果: {query}】"]
+        for e in entries:
+            title = re.sub(r"\s+", " ", (e.findtext("a:title", "", ns) or "")).strip()
+            summary = re.sub(r"\s+", " ", (e.findtext("a:summary", "", ns) or "")).strip()[:450]
+            pub = (e.findtext("a:published", "", ns) or "")[:10]
+            authors = ", ".join((a.findtext("a:name", "", ns) or "") for a in e.findall("a:author", ns)[:3])
+            link = (e.findtext("a:id", "", ns) or "").strip()
+            out.append(f"- **[{title}]({link})** ({pub} / 著者: {authors})\n  要旨: {summary}...")
+        return "\n\n".join(out)
+    except Exception as e:
+        return f"arXiv検索エラー: {e}"
 
 def run_python_tool(code: str) -> str:
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
@@ -229,7 +302,7 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
         raise HTTPException(500, "NVIDIA_API_KEY 未設定")
 
     uchats = db["chats"].setdefault(u, {})
-    sys_p = f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを、複雑な計算や数値検証・日付計算が必要な場合は run_python ツールを必ず呼び出して日本語で回答してください。"
+    sys_p = f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを、複雑な計算や数値検証・日付計算が必要な場合は run_python ツールを、用語や人物の定義は search_wikipedia を、学術論文や最新AI研究は search_arxiv ツールを必ず呼び出して日本語で回答してください。"
     cobj = uchats.setdefault(req.cid, {"title": req.text[:14], "msgs": [{"role": "system", "content": sys_p}], "turns": []})
     cobj["msgs"].append({"role": "user", "content": req.text})
 
@@ -300,7 +373,20 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
                             parsed = {"query": raw_args, "location": raw_args}
                             clean_args = json.dumps(parsed, ensure_ascii=False)
 
-                        if fname == "run_python":
+                        if fname == "search_wikipedia":
+                            wq = parsed.get("query") or raw_args
+                            wlang = parsed.get("lang") or "ja"
+                            yield f"data: {json.dumps({'type':'status','msg':f'📚 Wikipedia検索中: {wq}'})}\n\n"
+                            sres = search_wikipedia(wq, wlang)
+                            logs.append({"q": f"📚 Wikipedia: {wq}", "res": sres})
+                            yield f"data: {json.dumps({'type':'s','q':f'📚 Wikipedia: {wq}','res':sres})}\n\n"
+                        elif fname == "search_arxiv":
+                            aq = parsed.get("query") or raw_args
+                            yield f"data: {json.dumps({'type':'status','msg':f'🎓 arXiv論文検索中: {aq}'})}\n\n"
+                            sres = search_arxiv(aq)
+                            logs.append({"q": f"🎓 arXiv: {aq}", "res": sres})
+                            yield f"data: {json.dumps({'type':'s','q':f'🎓 arXiv: {aq}','res':sres})}\n\n"
+                        elif fname == "run_python":
                             py_code = parsed.get("code") or parsed.get("query") or raw_args
                             yield f"data: {json.dumps({'type':'status','msg':'🐍 Python自律計算・検証中...'})}\n\n"
                             sres = run_python_tool(py_code)
