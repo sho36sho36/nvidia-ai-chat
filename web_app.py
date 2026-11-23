@@ -636,7 +636,7 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
     mem_txt = "【最重要：このユーザーについてあなたが記憶している長期記憶】\n" + "\n".join(f"- {m}" for m in umems) + "\n\n" if umems else ""
     sys_p = (
         f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、"
-        "URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを、複雑な計算や数値検証・日付計算が必要な場合は run_python ツールを、"
+        "URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを、複雑な計算や数値検証・日付計算が必要な場合は run_python ツール（もしエラーが出たら原因を分析して修正版コードで再実行する自己修正ループを行うこと）を、"
         "用語や人物の定義は search_wikipedia を、学術論文や最新AI研究は search_arxiv ツールを、株価・為替・暗号資産の現在価格は get_market_data ツールを必ず呼び出して日本語で回答してください。"
         "また、ユーザーが自身の属性・好み・使用技術・今後の会話でも覚えておくべき前提を話した場合は save_memory ツールで保存し、訂正や忘却を求めた場合は delete_memory ツールを使ってください。"
     )
@@ -667,7 +667,7 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
         hdr = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "text/event-stream"}
         t0, ta, tn, pt, ct, logs, rall, ans = time.perf_counter(), 0.0, 0.0, 0, 0, [], "", ""
         try:
-            for _ in range(3):
+            for _ in range(6):
                 has_img = any(isinstance(m.get("content"), list) for m in cobj["msgs"])
                 pay = {"model": req.model, "messages": cobj["msgs"], "max_tokens": 4096, "stream": True, "stream_options": {"include_usage": True}, "temperature": 0.5}
                 if not has_img:
@@ -780,9 +780,13 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
                             py_code = parsed.get("code") or parsed.get("query") or raw_args
                             yield f"data: {json.dumps({'type':'status','msg':'🐍 Python自律計算・検証中...'})}\n\n"
                             sres = run_python_tool(py_code)
-                            log_md = f"**実行コード:**\n```python\n{py_code}\n```\n**計算結果:**\n```text\n{sres}\n```"
-                            logs.append({"q": "🐍 Python自律計算", "res": log_md})
-                            yield f"data: {json.dumps({'type':'s','q':'🐍 Python自律計算','res':log_md})}\n\n"
+                            is_err = sres.startswith(("実行エラー", "システム実行エラー"))
+                            label = "🐍 Pythonエラー検出（自動デバッグへ）" if is_err else "🐍 Python自律計算・検証成功"
+                            log_md = f"**実行コード:**\n```python\n{py_code}\n```\n**実行結果:**\n```text\n{sres}\n```"
+                            logs.append({"q": label, "res": log_md})
+                            yield f"data: {json.dumps({'type':'s','q':label,'res':log_md})}\n\n"
+                            if is_err:
+                                sres += "\n\n【自己修正指示】上記のPythonエラー原因を分析し、コードを修正して必ずもう一度 run_python ツールを実行して成功させてください。"
                         elif fname == "read_url":
                             target_url = parsed.get("url") or parsed.get("query") or raw_args
                             yield f"data: {json.dumps({'type':'status','msg':f'📖 ページ読込中: {target_url}'})}\n\n"
