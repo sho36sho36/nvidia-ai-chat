@@ -97,7 +97,7 @@ def search_wikipedia(query: str, lang: str = "ja") -> str:
     lg = "en" if str(lang).lower().startswith("en") else "ja"
     hdr = {"User-Agent": "NvidiaChatAgent/1.0 (https://github.com)"}
     try:
-        api_base = "https://" + lg + "." + ".".join(["wikipedia", "org", "w", "api.php"])
+        api_base = "https://" + lg + "." + "wikipedia.org/w/api.php"
         r = requests.get(api_base, params={"action": "query", "list": "search", "srsearch": query, "format": "json", "srlimit": 3}, headers=hdr, timeout=8).json()
         hits = (r.get("query") or {}).get("search") or []
         if not hits and lg == "ja":
@@ -107,7 +107,7 @@ def search_wikipedia(query: str, lang: str = "ja") -> str:
         out = [f"【Wikipedia検索結果 ({lg}): {query}】"]
         for h in hits:
             title = h["title"]
-            sum_url = "https://" + lg + "." + ".".join(["wikipedia", "org", "api", "rest_v1", "page", "summary"]) + "/" + urllib.parse.quote(title)
+            sum_url = "https://" + lg + "." + "wikipedia.org/api/rest_v1/page/summary" + "/" + urllib.parse.quote(title)
             sr = requests.get(sum_url, headers=hdr, timeout=8).json()
             extract = sr.get("extract") or re.sub(r"<[^>]+>", "", h.get("snippet", ""))
             page_url = ((sr.get("content_urls") or {}).get("desktop") or {}).get("page") or f"https://{lg}.wikipedia.org/wiki/{urllib.parse.quote(title)}"
@@ -118,7 +118,7 @@ def search_wikipedia(query: str, lang: str = "ja") -> str:
 
 def search_arxiv(query: str) -> str:
     try:
-        arxiv_url = "http://" + ".".join(["export", "arxiv", "org", "api", "query"])
+        arxiv_url = "http://" + "export.arxiv.org/api/query"
         r = requests.get(arxiv_url, params={"search_query": f"all:{query}", "start": 0, "max_results": 4, "sortBy": "submittedDate", "sortOrder": "descending"}, timeout=12)
         if r.status_code != 200:
             return f"arXiv APIエラー: {r.status_code}"
