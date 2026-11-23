@@ -36,6 +36,30 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "save_memory",
+            "description": "ユーザーの職業・学年・使用言語・好み・継続的な前提条件など、別の新しいチャットでも覚えておくべき重要な情報を長期記憶に保存する。",
+            "parameters": {
+                "type": "object",
+                "properties": {"fact": {"type": "string", "description": "記憶する簡潔な事実（例: ユーザーはPythonとFastAPIでWebアプリを開発している）"}},
+                "required": ["fact"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_memory",
+            "description": "古くなった・誤っている・ユーザーが忘れるよう指示した長期記憶を削除する。",
+            "parameters": {
+                "type": "object",
+                "properties": {"keyword": {"type": "string", "description": "削除対象の記憶に含まれるキーワード"}},
+                "required": ["keyword"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_market_data",
             "description": "株価（日本株は7203.Tのように.T付き、米国株はNVDAやAAPL、指数は^N225）、為替レート（USDJPY=X）、暗号資産（BTC-USD, ETH-USD）の最新リアルタイム価格と変動率を取得する。",
             "parameters": {
@@ -415,6 +439,35 @@ def del_user(target: str, authorization: str = Header("")):
     if not db["users"][u]["admin"] or target == ADMIN_USER: raise HTTPException(403, "不可")
     db["users"].pop(target, None); db["chats"].pop(target, None); save_db(db); return {"ok": True}
 
+class MemReq(BaseModel):
+    fact: str
+
+@app.get("/api/memories")
+def get_memories(authorization: str = Header("")):
+    u, db = get_user(authorization)
+    return db.setdefault("memories", {}).get(u, [])
+
+@app.post("/api/memories")
+def add_memory(req: MemReq, authorization: str = Header("")):
+    u, db = get_user(authorization)
+    fact = req.fact.strip()
+    if not fact:
+        raise HTTPException(400, "内容が空です")
+    mems = db.setdefault("memories", {}).setdefault(u, [])
+    if fact not in mems:
+        mems.append(fact)
+        save_db(db)
+    return {"ok": True, "memories": mems}
+
+@app.delete("/api/memories/{idx}")
+def del_memory(idx: int, authorization: str = Header("")):
+    u, db = get_user(authorization)
+    mems = db.setdefault("memories", {}).setdefault(u, [])
+    if 0 <= idx < len(mems):
+        mems.pop(idx)
+        save_db(db)
+    return {"ok": True, "memories": mems}
+
 @app.get("/api/chats")
 def get_chats(authorization: str = Header("")):
     u, db = get_user(authorization); return db["chats"].get(u, {})
@@ -567,8 +620,18 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
         raise HTTPException(500, "NVIDIA_API_KEY 未設定")
 
     uchats = db["chats"].setdefault(u, {})
-    sys_p = f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを、複雑な計算や数値検証・日付計算が必要な場合は run_python ツールを、用語や人物の定義は search_wikipedia を、学術論文や最新AI研究は search_arxiv ツールを、株価・為替・暗号資産の現在価格は get_market_data ツールを必ず呼び出して日本語で回答してください。"
+    umems = db.setdefault("memories", {}).get(u, [])
+    mem_txt = "\n【ユーザーに関する長期記憶（常に前提として考慮すること）】\n" + "\n".join(f"- {m}" for m in umems) if umems else ""
+    sys_p = (
+        f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、"
+        "URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを、複雑な計算や数値検証・日付計算が必要な場合は run_python ツールを、"
+        "用語や人物の定義は search_wikipedia を、学術論文や最新AI研究は search_arxiv ツールを、株価・為替・暗号資産の現在価格は get_market_data ツールを必ず呼び出して日本語で回答してください。"
+        "また、ユーザーが自身の属性・好み・使用技術・今後の会話でも覚えておくべき前提を話した場合は save_memory ツールで保存し、訂正や忘却を求めた場合は delete_memory ツールを使ってください。"
+        + mem_txt
+    )
     cobj = uchats.setdefault(req.cid, {"title": req.text[:14], "msgs": [{"role": "system", "content": sys_p}], "turns": []})
+    if cobj["msgs"] and cobj["msgs"].get("role") == "system":
+        cobj["msgs"]["content"] = sys_p
     doc_prefix = ""
     if req.doc_name and req.doc_data:
         doc_prefix = parse_document(req.doc_name, req.doc_data) + "\n\n【ユーザーの指示】\n"
@@ -657,7 +720,25 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
                             parsed = {"query": raw_args, "location": raw_args}
                             clean_args = json.dumps(parsed, ensure_ascii=False)
 
-                        if fname == "get_market_data":
+                        if fname == "save_memory":
+                            fact = (parsed.get("fact") or raw_args).strip()
+                            mems = db.setdefault("memories", {}).setdefault(u, [])
+                            if fact and fact not in mems:
+                                mems.append(fact)
+                                save_db(db)
+                            sres = f"長期記憶に保存しました: {fact}"
+                            logs.append({"q": f"🧠 記憶保存: {fact}", "res": sres})
+                            yield f"data: {json.dumps({'type':'s','q':f'🧠 記憶保存: {fact}','res':sres})}\n\n"
+                        elif fname == "delete_memory":
+                            kw = (parsed.get("keyword") or raw_args).strip()
+                            mems = db.setdefault("memories", {}).setdefault(u, [])
+                            before = len(mems)
+                            db["memories"][u] = [m for m in mems if kw not in m]
+                            save_db(db)
+                            sres = f"キーワード '{kw}' に一致する記憶を {before - len(db['memories'][u])} 件削除しました。"
+                            logs.append({"q": f"🧠 記憶削除: {kw}", "res": sres})
+                            yield f"data: {json.dumps({'type':'s','q':f'🧠 記憶削除: {kw}','res':sres})}\n\n"
+                        elif fname == "get_market_data":
                             msym = parsed.get("symbol") or parsed.get("query") or raw_args
                             yield f"data: {json.dumps({'type':'status','msg':f'📈 市場データ取得中: {msym}'})}\n\n"
                             sres = get_market_data(msym)

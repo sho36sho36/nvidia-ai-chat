@@ -49,13 +49,25 @@ textarea{flex:1;resize:none;height:54px}
 <input id="ap" type="password" placeholder="パスワード" style="width:100%;margin-bottom:12px">
 <div style="display:flex;gap:8px"><button onclick="doAuth('login')" style="flex:1">ログイン</button><button class="sec" onclick="doAuth('register')" style="flex:1">新規申請</button></div>
 <p id="amsg" style="color:#f0883e;font-size:13px;margin-top:10px"></p></div></div>
+<div id="mem-modal" style="position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:55">
+ <div class="box" style="width:420px;max-width:92vw">
+  <h3>🧠 ロングタームメモリ（長期記憶）</h3>
+  <p style="font-size:12px;color:#8b949e;margin:0 0 10px">AIが会話から自動記憶した内容や、手動で登録した前提はすべてのチャットで共有されます。</p>
+  <div style="display:flex;gap:6px;margin-bottom:10px">
+   <input id="mem-inp" placeholder="例: 回答は結論から簡潔に書く" style="flex:1">
+   <button onclick="addMem()">追加</button>
+  </div>
+  <div id="mem-list" style="max-height:240px;overflow-y:auto"></div>
+  <button class="sec" onclick="document.getElementById('mem-modal').style.display='none'" style="margin-top:12px;width:100%">閉じる</button>
+ </div>
+</div>
 <div id="adm-modal"><div class="box" style="width:380px"><h3>👑 ユーザー承認管理</h3><div id="ulist"></div><button class="sec" onclick="document.getElementById('adm-modal').style.display='none'" style="margin-top:10px;width:100%">閉じる</button></div></div>
 <div id="ovl" onclick="toggleSide(false)"></div><div id="side"><div style="display:flex;gap:4px"><button onclick="newChat()" style="flex:1">+新規</button><button class="sec" onclick="renChat()">名変</button><button class="del" onclick="delChat()">削除</button></div>
 <input id="sq" placeholder="🔍 全文検索..." oninput="renderList()"><div id="clist"></div></div>
 <div id="main"><div id="top"><button id="m-btn" class="sec" onclick="toggleSide()">☰</button>
 <select id="msel"><option value="mistralai/mistral-large-4-1t-a52b">Mistral Large 4</option><option value="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning">🖼️ Nemotron 3 Nano Omni 30B (Vision)</option><option value="google/paligemma">🖼️ PaliGemma (Vision)</option><option value="nvidia/nemotron-3.5-bolt-e4b">Nemotron 3.5 Bolt</option><option value="stepfun-ai/step-5-preview">Step 5 Preview</option><option value="z-ai/glm-5-3-flash">GLM-5-3-Flash</option><option value="meta/muse-glimmer-30b">Muse Glimmer 30B</option></select>
 <select id="esel"><option value="low">思考:Low</option><option value="medium">思考:Med</option><option value="high">思考:High</option></select>
-<button id="tts-auto" class="sec" onclick="toggleAutoTts()" title="回答完了時に自動で読み上げ">🔇 自動読上:OFF</button><a href="/contact" target="_blank" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:7px 10px;font-size:13px;text-decoration:none;font-weight:bold">📩 お問い合わせ</a><button id="adm-btn" class="sec" style="display:none" onclick="openAdmin()">👑 ユーザー管理</button>
+<button id="tts-auto" class="sec" onclick="toggleAutoTts()" title="回答完了時に自動で読み上げ">🔇 自動読上:OFF</button><button class="sec" onclick="openMem()" title="長期記憶の確認・編集">🧠 メモリ</button><a href="/contact" target="_blank" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:7px 10px;font-size:13px;text-decoration:none;font-weight:bold">📩 お問い合わせ</a><button id="adm-btn" class="sec" style="display:none" onclick="openAdmin()">👑 ユーザー管理</button>
 <button class="sec" onclick="logout()" style="margin-left:auto">ログアウト</button></div>
 <div id="msgs"></div>
 <div id="doc-bar"><span id="doc-name"></span><button class="del" style="padding:4px 8px;font-size:12px" onclick="clearDoc()">✕ 解除</button></div><div id="img-bar"><img id="img-prev"><span style="font-size:12px;color:#8b949e">画像を添付中</span><button class="del" style="padding:4px 8px;font-size:12px" onclick="clearImg()">✕ 解除</button></div><div id="bot"><input type="file" id="img-file" accept="image/*" style="display:none" onchange="handleImg(this.files.item(0))"><button class="sec" onclick="document.getElementById('img-file').click()" title="画像を添付">🖼️</button><input type="file" id="doc-file" accept=".pdf,.csv,.tsv,.json,.txt,.md,.py,.js,.ts,.html,.css,.java,.c,.cpp,.go,.rs,.sql,.yaml,.yml,.xml,.log" style="display:none" onchange="handleDoc(this.files.item(0))"><button class="sec" onclick="document.getElementById('doc-file').click()" title="PDF/CSV/コードを添付">📄</button><button id="mic-btn" class="sec" onclick="toggleMic()" title="音声入力">🎤</button><textarea id="inp" placeholder="質問を入力 (Shift+Enterで改行 / Enterで送信)"></textarea><button id="sbtn" onclick="send()">送信</button></div></div>
@@ -294,6 +306,19 @@ async function send(){
   }
  }
  sbtn.disabled=false;
+}
+async function openMem(){
+ document.getElementById("mem-modal").style.display="flex";
+ const ms=await(await api("/api/memories")).json();
+ document.getElementById("mem-list").innerHTML=ms.length?ms.map((m,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #30363d;font-size:13px"><span>• ${esc(m)}</span><button class="del" style="padding:3px 8px;font-size:12px" onclick="delMem(${i})">削除</button></div>`).join(""):'<p style="font-size:13px;color:#8b949e">まだ保存された記憶はありません。</p>';
+}
+async function addMem(){
+ const v=document.getElementById("mem-inp").value.trim();if(!v)return;
+ await api("/api/memories",{method:"POST",body:JSON.stringify({fact:v})});
+ document.getElementById("mem-inp").value="";openMem();
+}
+async function delMem(i){
+ await api("/api/memories/"+i,{method:"DELETE"});openMem();
 }
 async function openAdmin(){
  document.getElementById("adm-modal").style.display="flex";
