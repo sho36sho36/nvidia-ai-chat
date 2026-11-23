@@ -630,8 +630,10 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
         + mem_txt
     )
     cobj = uchats.setdefault(req.cid, {"title": req.text[:14], "msgs": [{"role": "system", "content": sys_p}], "turns": []})
-    if cobj["msgs"] and cobj["msgs"].get("role") == "system":
-        cobj["msgs"]["content"] = sys_p
+    if cobj["msgs"]:
+        first_msg = next(iter(cobj["msgs"]))
+        if first_msg.get("role") == "system":
+            first_msg["content"] = sys_p
     doc_prefix = ""
     if req.doc_name and req.doc_data:
         doc_prefix = parse_document(req.doc_name, req.doc_data) + "\n\n【ユーザーの指示】\n"
