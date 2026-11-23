@@ -21,7 +21,7 @@ pre{background:#0d1117;padding:12px;border-radius:6px;overflow-x:auto;border:1px
 code{font-family:Consolas,Monaco,monospace;font-size:13px}
 p code,li code,.math{background:#21262d;padding:2px 6px;border-radius:4px;color:#a5d6ff;font-family:Cambria,"Times New Roman",serif;font-size:15px}
 .mblk{display:block;background:#0d1117;border-left:3px solid #58a6ff;padding:8px 12px;margin:8px 0;font-family:Cambria,"Times New Roman",serif;font-size:16px;color:#e6edf3}
-.md h1,.md h2,.md h3{margin:10px 0 6px;color:#79c0ff}.md ul{margin:6px 0;padding-left:20px}.md a{color:#58a6ff}
+.md h1,.md h2,.md h3{margin:10px 0 6px;color:#79c0ff}.md ul{margin:6px 0;padding-left:20px}.md a{color:#58a6ff}.md table{border-collapse:collapse;margin:10px 0;width:100%;font-size:14px}.md th,.md td{border:1px solid #30363d;padding:6px 10px}.md th{background:#21262d;color:#79c0ff}
 .cacts{display:flex;gap:6px;margin:4px 0 12px}
 .stat{font-size:12px;color:#7ee787;margin-top:8px}
 #bot{padding:10px;background:#161b22;border-top:1px solid #30363d;display:flex;gap:8px}
@@ -62,15 +62,34 @@ function convMath(s){
  return s;
 }
 function md(src){
- const blocks=[];
+ const blocks=[],tables=[];
  let t=String(src||"").replace(/```([a-zA-Z0-9_+-]*)\s*\n([\s\(\S\)]*?)```/g,(_,l,c)=>{blocks.push(`<pre><code class="language-${esc(l)}">${esc(c)}</code></pre>`);return `\x00B${blocks.length-1}\x00`;});
  t=t.replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g,(_,a,b)=>`<span class="mblk">${esc(convMath((a||b).trim()))}</span>`)
   .replace(/\$([^$\n]+?)\$|\\\((.+?)\\\)/g,(_,a,b)=>`<span class="math">${esc(convMath((a||b).trim()))}</span>`);
- t=esc(convMath(t)).replace(/&lt;span class="(mblk|math)"&gt;(.*?)&lt;\/span&gt;/g,'<span class="$1">$2</span>')
+ t=t.replace(/(?:^\|.+\|[ \t]*\r?\n?){2,}/gm, blk => {
+  const lines = blk.trim().split(/\r?\n/).map(l => l.trim().replace(/^\|+|\|+$/g, "").split("|").map(c => c.trim()));
+  const head = lines.shift();
+  const sep = lines.shift();
+  if (!head || !sep || !sep.every(c => /^:?-+:?$/.test(c))) return blk;
+  const aligns = sep.map(c => c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : "left");
+  const th = "<tr>" + head.map((c, i) => `<th style="text-align:${aligns.at(i) || "left"}">${c}</th>`).join("") + "</tr>";
+  const tb = lines.map(r => "<tr>" + r.map((c, i) => `<td style="text-align:${aligns.at(i) || "left"}">${c}</td>`).join("") + "</tr>").join("");
+  tables.push(`<table><thead>${th}</thead><tbody>${tb}</tbody></table>`);
+  return `\x00T${tables.length - 1}\x00`;
+});t=esc(convMath(t)).replace(/&lt;span class="(mblk|math)"&gt;(.*?)&lt;\/span&gt;/g,'<span class="$1">$2</span>')
   .replace(/`([^`\n]+)`/g,"<code>$1</code>").replace(/^### (.+)$/gm,"<h3>$1</h3>").replace(/^## (.+)$/gm,"<h2>$1</h2>").replace(/^# (.+)$/gm,"<h1>$1</h1>")
   .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank">$1</a>')
-  .replace(/^\s*[-*] (.+)$/gm,"<ul><li>$1</li></ul>").replace(/<\/ul>\n<ul>/g,"").replace(/\n/g,"<br>");
- return t.replace(/\x00B(\d+)\x00/g,(_,i)=>blocks.at(Number(i)));
+  .replace(/(?:^\|.+\|[ \t]*\r?\n?){2,}/gm, blk => {
+  const lines = blk.trim().split(/\r?\n/).map(l => l.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim()));
+  const head = lines.shift();
+  const sep = lines.shift();
+  if (!head || !sep || !sep.every(c => /^:?-+:?$/.test(c))) return blk;
+  const aligns = sep.map(c => c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : "left");
+  const th = "<tr>" + head.map((c, i) => `<th style="text-align:${aligns.at(i) || "left"}">${c}</th>`).join("") + "</tr>";
+  const tb = lines.map(r => "<tr>" + r.map((c, i) => `<td style="text-align:${aligns.at(i) || "left"}">${c}</td>`).join("") + "</tr>").join("");
+  return `<table><thead>${th}</thead><tbody>${tb}</tbody></table>\n`;
+}).replace(/^\s*[-*] (.+)$/gm,"<ul><li>$1</li></ul>").replace(/<\/ul>\n<ul>/g,"").replace(/\n/g,"<br>");
+ return t.replace(/\x00T(\d+)\x00/g,(_,i)=>tables.at(Number(i))).replace(/\x00B(\d+)\x00/g,(_,i)=>blocks.at(Number(i)));
 }
 const isBottom=()=>(msgs.scrollHeight-msgs.scrollTop-msgs.clientHeight)<=30;
 async function doAuth(t){
@@ -161,3 +180,6 @@ async function openAdmin(){
 async function admAct(t,u){await api(t==="approve"?`/api/admin/approve/${u}`:`/api/admin/user/${u}`,{method:t==="approve"?"POST":"DELETE"});openAdmin();}
 if(tok){auth.style.display="none";init();}
 </script></body></html>
+
+
+
