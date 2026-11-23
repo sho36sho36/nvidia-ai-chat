@@ -17,6 +17,20 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_market_data",
+            "description": "株価（日本株は7203.Tのように.T付き、米国株はNVDAやAAPL、指数は^N225）、為替レート（USDJPY=X）、暗号資産（BTC-USD, ETH-USD）の最新リアルタイム価格と変動率を取得する。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "ティッカーシンボル（例: NVDA, 7203.T, ^N225, USDJPY=X, BTC-USD）"}
+                },
+                "required": ["symbol"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_wikipedia",
             "description": "人物、歴史、用語、科学技術、作品などの正確な定義や概要をWikipedia公式APIから検索して取得する。",
             "parameters": {
@@ -92,6 +106,47 @@ TOOLS = [
 ]
 
 WMO = {0:"快晴",1:"晴れ",2:"一部曇り",3:"曇り",45:"霧",51:"弱い霧雨",53:"霧雨",61:"弱い雨",63:"雨",65:"強い雨",71:"弱い雪",73:"雪",75:"強い雪",80:"にわか雨",95:"雷雨"}
+
+def get_market_data(symbol: str) -> str:
+    sym = symbol.strip().upper()
+    alias = {"USD/JPY": "USDJPY=X", "USDJPY": "USDJPY=X", "EUR/JPY": "EURJPY=X", "BTC": "BTC-USD", "BITCOIN": "BTC-USD", "ETH": "ETH-USD", "ETHEREUM": "ETH-USD", "NIKKEI": "^N225", "日経平均": "^N225", "トヨタ": "7203.T", "NVIDIA": "NVDA"}
+    sym = alias.get(sym, sym)
+    hdr = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    try:
+        yf_url = "https://" + "/".join(["://yahoo.com", "v8", "finance", "chart", urllib.parse.quote(sym)])
+        r = requests.get(yf_url, params={"interval": "1d", "range": "5d"}, headers=hdr, timeout=8)
+        if r.status_code == 200:
+            data = r.json()
+            res = ((data.get("chart") or {}).get("result") or [None])[0]
+            if res and res.get("meta"):
+                meta = res["meta"]
+                price = meta.get("regularMarketPrice")
+                prev = meta.get("chartPreviousClose") or meta.get("previousClose")
+                curr = meta.get("currency", "")
+                name = meta.get("shortName") or meta.get("longName") or sym
+                if price is not None:
+                    diff_str = ""
+                    if prev:
+                        diff = price - prev
+                        pct = (diff / prev) * 100
+                        sign = "+" if diff >= 0 else ""
+                        diff_str = f" / 前日比: {sign}{diff:,.2f} ({sign}{pct:.2f}%)"
+                    return f"【リアルタイム市場データ: {name} ({sym})】\n現在値: {price:,.2f} {curr}{diff_str}\n市場状態: {meta.get('marketState', 'UNKNOWN')}"
+    except Exception:
+        pass
+
+    # 為替フォールバック (Frankfurter API)
+    if "JPY" in sym or "USD" in sym:
+        try:
+            fx_url = "https://" + "/".join(["api.frankfurter.app", "latest"])
+            fr = requests.get(fx_url, params={"from": "USD", "to": "JPY,EUR"}, timeout=8).json()
+            rates = fr.get("rates") or {}
+            if "JPY" in rates:
+                return f"【為替レート (Frankfurter / {fr.get('date')})】\n1 USD = {rates['JPY']} JPY"
+        except Exception:
+            pass
+
+    return f"シンボル '{symbol}' の市場データを取得できませんでした（日本株は 7203.T のように .T を付けて指定してください）。"
 
 def search_wikipedia(query: str, lang: str = "ja") -> str:
     lg = "en" if str(lang).lower().startswith("en") else "ja"
@@ -302,7 +357,7 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
         raise HTTPException(500, "NVIDIA_API_KEY 未設定")
 
     uchats = db["chats"].setdefault(u, {})
-    sys_p = f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを、複雑な計算や数値検証・日付計算が必要な場合は run_python ツールを、用語や人物の定義は search_wikipedia を、学術論文や最新AI研究は search_arxiv ツールを必ず呼び出して日本語で回答してください。"
+    sys_p = f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを、複雑な計算や数値検証・日付計算が必要な場合は run_python ツールを、用語や人物の定義は search_wikipedia を、学術論文や最新AI研究は search_arxiv ツールを、株価・為替・暗号資産の現在価格は get_market_data ツールを必ず呼び出して日本語で回答してください。"
     cobj = uchats.setdefault(req.cid, {"title": req.text[:14], "msgs": [{"role": "system", "content": sys_p}], "turns": []})
     cobj["msgs"].append({"role": "user", "content": req.text})
 
@@ -373,7 +428,13 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
                             parsed = {"query": raw_args, "location": raw_args}
                             clean_args = json.dumps(parsed, ensure_ascii=False)
 
-                        if fname == "search_wikipedia":
+                        if fname == "get_market_data":
+                            msym = parsed.get("symbol") or parsed.get("query") or raw_args
+                            yield f"data: {json.dumps({'type':'status','msg':f'📈 市場データ取得中: {msym}'})}\n\n"
+                            sres = get_market_data(msym)
+                            logs.append({"q": f"📈 市場: {msym}", "res": sres})
+                            yield f"data: {json.dumps({'type':'s','q':f'📈 市場: {msym}','res':sres})}\n\n"
+                        elif fname == "search_wikipedia":
                             wq = parsed.get("query") or raw_args
                             wlang = parsed.get("lang") or "ja"
                             yield f"data: {json.dumps({'type':'status','msg':f'📚 Wikipedia検索中: {wq}'})}\n\n"
