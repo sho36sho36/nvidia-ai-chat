@@ -695,9 +695,9 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
     actual_text = doc_prefix + (req.text or ("このドキュメントの内容を分かりやすく要約・解析してください。" if req.doc_name else ""))
 
     if req.image:
-        v_models = ("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "google/paligemma")
+        v_models = ("meta/muse-glimmer-30b", "google/paligemma")
         if req.model not in v_models:
-            req.model = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+            req.model = "meta/muse-glimmer-30b"
         u_content = [
             {"type": "text", "text": actual_text or "この画像について詳しく説明してください。"},
             {"type": "image_url", "image_url": {"url": req.image}}
