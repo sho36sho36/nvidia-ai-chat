@@ -17,6 +17,18 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "run_python",
+            "description": "複雑な数学計算、統計処理、日付・曜日計算、シミュレーション、アルゴリズムの検証のためにPythonコードを実行し、標準出力を取得する。必ずprint()で結果を出力すること。",
+            "parameters": {
+                "type": "object",
+                "properties": {"code": {"type": "string", "description": "実行するPythonコード（結果をprintで出力すること）"}},
+                "required": ["code"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "read_url",
             "description": "指定されたURL（https://...）のWebページにアクセスし、記事やドキュメントの本文テキストを取得して読む。ユーザーがURLを提示した時や検索結果の詳細を読む時に使う。",
             "parameters": {
@@ -53,6 +65,23 @@ TOOLS = [
 ]
 
 WMO = {0:"快晴",1:"晴れ",2:"一部曇り",3:"曇り",45:"霧",51:"弱い霧雨",53:"霧雨",61:"弱い雨",63:"雨",65:"強い雨",71:"弱い雪",73:"雪",75:"強い雪",80:"にわか雨",95:"雷雨"}
+
+def run_python_tool(code: str) -> str:
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
+        f.write(code)
+        path = f.name
+    try:
+        res = subprocess.run(["python", path], capture_output=True, text=True, timeout=10, encoding="utf-8", errors="replace")
+        out = res.stdout.strip()
+        err = res.stderr.strip()
+        if res.returncode != 0:
+            return f"実行エラー (code={res.returncode}):\n{err}"
+        return out or "（正常終了・print出力なし）"
+    except Exception as e:
+        return f"システム実行エラー: {e}"
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
 
 def read_url(url: str) -> str:
     try:
@@ -200,7 +229,7 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
         raise HTTPException(500, "NVIDIA_API_KEY 未設定")
 
     uchats = db["chats"].setdefault(u, {})
-    sys_p = f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを必ず呼び出して日本語で回答してください。"
+    sys_p = f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを、複雑な計算や数値検証・日付計算が必要な場合は run_python ツールを必ず呼び出して日本語で回答してください。"
     cobj = uchats.setdefault(req.cid, {"title": req.text[:14], "msgs": [{"role": "system", "content": sys_p}], "turns": []})
     cobj["msgs"].append({"role": "user", "content": req.text})
 
@@ -271,7 +300,14 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
                             parsed = {"query": raw_args, "location": raw_args}
                             clean_args = json.dumps(parsed, ensure_ascii=False)
 
-                        if fname == "read_url":
+                        if fname == "run_python":
+                            py_code = parsed.get("code") or parsed.get("query") or raw_args
+                            yield f"data: {json.dumps({'type':'status','msg':'🐍 Python自律計算・検証中...'})}\n\n"
+                            sres = run_python_tool(py_code)
+                            log_md = f"**実行コード:**\n```python\n{py_code}\n```\n**計算結果:**\n```text\n{sres}\n```"
+                            logs.append({"q": "🐍 Python自律計算", "res": log_md})
+                            yield f"data: {json.dumps({'type':'s','q':'🐍 Python自律計算','res':log_md})}\n\n"
+                        elif fname == "read_url":
                             target_url = parsed.get("url") or parsed.get("query") or raw_args
                             yield f"data: {json.dumps({'type':'status','msg':f'📖 ページ読込中: {target_url}'})}\n\n"
                             sres = read_url(target_url)
