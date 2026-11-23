@@ -43,7 +43,7 @@ textarea{flex:1;resize:none;height:54px}
   #bot{padding:8px;gap:6px}
   textarea{font-size:16px;height:46px}
   #sbtn{padding:0 14px}
-}</style></head><body>
+}#img-bar{display:none;padding:6px 12px;background:#161b22;border-top:1px solid #30363d;align-items:center;gap:10px}#img-prev{max-height:64px;border-radius:6px;border:1px solid #58a6ff}.q-img{max-width:240px;max-height:200px;border-radius:8px;margin-top:6px;display:block;border:1px solid #30363d}</style></head><body>
 <div id="auth"><div class="box"><h3>🔐 NVIDIA AI ログイン</h3>
 <input id="au" placeholder="ユーザー名" style="width:100%;margin-bottom:8px">
 <input id="ap" type="password" placeholder="パスワード" style="width:100%;margin-bottom:12px">
@@ -53,13 +53,37 @@ textarea{flex:1;resize:none;height:54px}
 <div id="ovl" onclick="toggleSide(false)"></div><div id="side"><div style="display:flex;gap:4px"><button onclick="newChat()" style="flex:1">+新規</button><button class="sec" onclick="renChat()">名変</button><button class="del" onclick="delChat()">削除</button></div>
 <input id="sq" placeholder="🔍 全文検索..." oninput="renderList()"><div id="clist"></div></div>
 <div id="main"><div id="top"><button id="m-btn" class="sec" onclick="toggleSide()">☰</button>
-<select id="msel"><option value="mistralai/mistral-large-4-1t-a52b">Mistral Large 4</option><option value="nvidia/nemotron-3.5-bolt-e4b">Nemotron 3.5 Bolt</option><option value="stepfun-ai/step-5-preview">Step 5 Preview</option><option value="z-ai/glm-5-3-flash">GLM-5-3-Flash</option><option value="meta/muse-glimmer-30b">Muse Glimmer 30B</option></select>
+<select id="msel"><option value="mistralai/mistral-large-4-1t-a52b">Mistral Large 4</option><option value="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning">🖼️ Nemotron 3 Nano Omni 30B (Vision)</option><option value="google/paligemma">🖼️ PaliGemma (Vision)</option><option value="nvidia/nemotron-3.5-bolt-e4b">Nemotron 3.5 Bolt</option><option value="stepfun-ai/step-5-preview">Step 5 Preview</option><option value="z-ai/glm-5-3-flash">GLM-5-3-Flash</option><option value="meta/muse-glimmer-30b">Muse Glimmer 30B</option></select>
 <select id="esel"><option value="low">思考:Low</option><option value="medium">思考:Med</option><option value="high">思考:High</option></select>
 <button id="adm-btn" class="sec" style="display:none" onclick="openAdmin()">👑 ユーザー管理</button>
 <button class="sec" onclick="logout()" style="margin-left:auto">ログアウト</button></div>
 <div id="msgs"></div>
-<div id="bot"><textarea id="inp" placeholder="質問を入力 (Shift+Enterで改行 / Enterで送信)"></textarea><button id="sbtn" onclick="send()">送信</button></div></div>
+<div id="img-bar"><img id="img-prev"><span style="font-size:12px;color:#8b949e">画像を添付中</span><button class="del" style="padding:4px 8px;font-size:12px" onclick="clearImg()">✕ 解除</button></div><div id="bot"><input type="file" id="img-file" accept="image/*" style="display:none" onchange="handleImg(this.files.item(0))"><button class="sec" onclick="document.getElementById('img-file').click()" title="画像を添付">🖼️</button><textarea id="inp" placeholder="質問を入力 (Shift+Enterで改行 / Enterで送信)"></textarea><button id="sbtn" onclick="send()">送信</button></div></div>
 <script>
+let pendingImg="";
+function clearImg(){pendingImg="";document.getElementById("img-bar").style.display="none";document.getElementById("img-file").value="";}
+function handleImg(file){
+ if(!file||!file.type.startsWith("image/"))return;
+ const r=new FileReader();
+ r.onload=e=>{
+  const img=new Image();
+  img.onload=()=>{
+   const max=1024;let w=img.width,ht=img.height;
+   if(w>max||ht>max){if(w>ht){ht=Math.round(ht*max/w);w=max;}else{w=Math.round(w*max/ht);ht=max;}}
+   const cv=document.createElement("canvas");cv.width=w;cv.height=ht;
+   cv.getContext("2d").drawImage(img,0,0,w,ht);
+   pendingImg=cv.toDataURL("image/jpeg",0.85);
+   document.getElementById("img-prev").src=pendingImg;
+   document.getElementById("img-bar").style.display="flex";
+  };
+  img.src=e.target.result;
+ };
+ r.readAsDataURL(file);
+}
+inp.addEventListener("paste",e=>{
+ const items=(e.clipboardData||{}).items||[];
+ for(const it of items){if(it.type.startsWith("image/")){handleImg(it.getAsFile());break;}}
+});
 let tok=localStorage.getItem("nv_tok")||"",chats={},cid="";
 const api=(p,opt={})=>fetch(p,{...opt,headers:{"Content-Type":"application/json","Authorization":tok,...(opt.headers||{})}});
 const esc=s=>String(s||"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
@@ -150,7 +174,7 @@ function renderMsgs(){
  msgs.innerHTML="";
  (chats[cid]?.turns||[]).forEach(t=>{
   const d=document.createElement("div");d.className="turn";
-  let h=`<div class="q">🧑 ${esc(t.q)} <small style="color:#8b949e">(${t.m})</small></div>`;
+  let h=`<div class="q">🧑 ${esc(t.q)} <small style="color:#8b949e">(${t.m})</small>${t.img?`<img class="q-img" src="${t.img}">`:""}</div>`;
   if(t.s?.length)h+=`<details><summary>🔍 Web検索 (${t.s.length}回)</summary>${t.s.map(x=>`<b>${esc(x.q)}</b><div class="md">${md(x.res)}</div>`).join("<hr>")}</details>`;
   if(t.r)h+=`<details><summary>🧠 思考プロセス (${t.r.length}字)</summary><div class="md">${md(t.r)}</div></details>`;
   h+=`<div class="md ans">${md(t.a)}</div><div class="stat">${t.st}</div>`;
@@ -160,16 +184,16 @@ function renderMsgs(){
 }
 inp.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}});
 async function send(){
- const text=inp.value.trim();if(!text||sbtn.disabled)return;
+ const text=inp.value.trim();const imgData=pendingImg;if((!text&&!imgData)||sbtn.disabled)return;clearImg();
  if(!cid||!chats[cid])await newChat(true);
  inp.value="";sbtn.disabled=true;
  if(!chats[cid].turns.length&&chats[cid].title==="新規チャット")chats[cid].title=text.slice(0,14);
  renderList();
  const d=document.createElement("div");d.className="turn";
- d.innerHTML=`<div class="q">🧑 ${esc(text)}</div><details id="sdet" style="display:none"><summary id="ssum">🔍 Web検索</summary><div id="sbox" class="md"></div></details><details id="rdet" style="display:none"><summary id="rsum">🧠 思考プロセス</summary><div id="rbox" class="md" style="color:#8b949e"></div></details><div class="md ans" id="abox">⏳ 接続中...</div><div class="stat" id="stbox"></div>`;
+ d.innerHTML=`<div class="q">🧑 ${esc(text||"[🖼️ 画像添付]")}${imgData?`<img class="q-img" src="${imgData}">`:""}</div><details id="sdet" style="display:none"><summary id="ssum">🔍 Web検索</summary><div id="sbox" class="md"></div></details><details id="rdet" style="display:none"><summary id="rsum">🧠 思考プロセス</summary><div id="rbox" class="md" style="color:#8b949e"></div></details><div class="md ans" id="abox">⏳ 接続中...</div><div class="stat" id="stbox"></div>`;
  msgs.appendChild(d);msgs.scrollTop=msgs.scrollHeight;
  let rtxt="",atxt="";
- const res=await api("/api/chat_stream",{method:"POST",body:JSON.stringify({cid,text,model:msel.value,effort:esel.value})});
+ const res=await api("/api/chat_stream",{method:"POST",body:JSON.stringify({cid,text,model:msel.value,effort:esel.value,image:imgData})});
  const reader=res.body.getReader(),dec=new TextDecoder();
  while(true){
   const{done,value}=await reader.read();if(done)break;

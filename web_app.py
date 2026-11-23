@@ -287,7 +287,12 @@ def get_user(token: str):
     return u, db
 
 class AuthReq(BaseModel): username: str; password: str
-class ChatReq(BaseModel): cid: str; text: str; model: str; effort: str
+class ChatReq(BaseModel):
+    cid: str
+    text: str
+    model: str
+    effort: str
+    image: str = ''
 class ExecReq(BaseModel): code: str
 
 @app.get("/", response_class=HTMLResponse)
@@ -359,14 +364,28 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
     uchats = db["chats"].setdefault(u, {})
     sys_p = f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを、複雑な計算や数値検証・日付計算が必要な場合は run_python ツールを、用語や人物の定義は search_wikipedia を、学術論文や最新AI研究は search_arxiv ツールを、株価・為替・暗号資産の現在価格は get_market_data ツールを必ず呼び出して日本語で回答してください。"
     cobj = uchats.setdefault(req.cid, {"title": req.text[:14], "msgs": [{"role": "system", "content": sys_p}], "turns": []})
-    cobj["msgs"].append({"role": "user", "content": req.text})
+    if req.image:
+        v_models = ("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "google/paligemma")
+        if req.model not in v_models:
+            req.model = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
+        u_content = [
+            {"type": "text", "text": req.text or "この画像について詳しく説明してください。"},
+            {"type": "image_url", "image_url": {"url": req.image}}
+        ]
+        cobj["msgs"].append({"role": "user", "content": u_content})
+    else:
+        cobj["msgs"].append({"role": "user", "content": req.text})
 
     def gen():
         hdr = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "text/event-stream"}
         t0, ta, tn, pt, ct, logs, rall, ans = time.perf_counter(), 0.0, 0.0, 0, 0, [], "", ""
         try:
             for _ in range(3):
-                pay = {"model": req.model, "messages": cobj["msgs"], "max_tokens": 4096, "stream": True, "stream_options": {"include_usage": True}, "temperature": 0.5, "tools": TOOLS, "tool_choice": "auto"}
+                has_img = any(isinstance(m.get("content"), list) for m in cobj["msgs"])
+                pay = {"model": req.model, "messages": cobj["msgs"], "max_tokens": 4096, "stream": True, "stream_options": {"include_usage": True}, "temperature": 0.5}
+                if not has_img:
+                    pay["tools"] = TOOLS
+                    pay["tool_choice"] = "auto"
                 if "nemotron" not in req.model:
                     pay["reasoning_effort"] = req.effort
                 r = requests.post(invoke_url, headers=hdr, json=pay, stream=True, timeout=120)
@@ -494,7 +513,7 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
 
             dt = time.perf_counter() - t0
             st = f"📊 入力:{pt} | 出力:{ct} | ⏱ 思考:{max(tn-ta,0.0) if tn else 0.0:.1f}s | 総:{dt:.2f}s | ⚡ {ct/max(dt-ta,0.01):.1f} tok/s"
-            turn = {"q": req.text, "a": ans, "r": rall.strip(), "s": logs, "m": f"{req.model.split('/')[-1]}|{req.effort}", "st": st}
+            turn = {"q": ("[🖼️ 画像添付] " + req.text).strip() if req.image else req.text, "img": req.image, "a": ans, "r": rall.strip(), "s": logs, "m": f"{req.model.split('/')[-1]}|{req.effort}", "st": st}
             cobj["turns"].append(turn)
             save_db(db)
             yield f"data: {json.dumps({'type':'done','turn':turn})}\n\n"
