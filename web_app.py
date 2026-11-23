@@ -36,6 +36,18 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "recall_memories",
+            "description": "ユーザーに関して長期記憶に保存されているすべての情報（居住地、職業、使用言語、好み、過去の記憶など）の一覧を取得して確認する。ユーザーについて尋ねられた時や記憶を問われた時は必ず呼び出すこと。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "save_memory",
             "description": "ユーザーの職業・学年・使用言語・好み・継続的な前提条件など、別の新しいチャットでも覚えておくべき重要な情報を長期記憶に保存する。",
             "parameters": {
@@ -621,14 +633,14 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
 
     uchats = db["chats"].setdefault(u, {})
     umems = db.setdefault("memories", {}).get(u, [])
-    mem_txt = "\n【ユーザーに関する長期記憶（常に前提として考慮すること）】\n" + "\n".join(f"- {m}" for m in umems) if umems else ""
+    mem_txt = "【最重要：このユーザーについてあなたが記憶している長期記憶】\n" + "\n".join(f"- {m}" for m in umems) + "\n\n" if umems else ""
     sys_p = (
         f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、"
         "URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを、複雑な計算や数値検証・日付計算が必要な場合は run_python ツールを、"
         "用語や人物の定義は search_wikipedia を、学術論文や最新AI研究は search_arxiv ツールを、株価・為替・暗号資産の現在価格は get_market_data ツールを必ず呼び出して日本語で回答してください。"
         "また、ユーザーが自身の属性・好み・使用技術・今後の会話でも覚えておくべき前提を話した場合は save_memory ツールで保存し、訂正や忘却を求めた場合は delete_memory ツールを使ってください。"
-        + mem_txt
     )
+    sys_p = mem_txt + sys_p
     cobj = uchats.setdefault(req.cid, {"title": req.text[:14], "msgs": [{"role": "system", "content": sys_p}], "turns": []})
     if cobj["msgs"]:
         first_msg = next(iter(cobj["msgs"]))
@@ -722,7 +734,12 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
                             parsed = {"query": raw_args, "location": raw_args}
                             clean_args = json.dumps(parsed, ensure_ascii=False)
 
-                        if fname == "save_memory":
+                        if fname == "recall_memories":
+                            mems = db.setdefault("memories", {}).get(u, [])
+                            sres = "【保存されている長期記憶一覧】\n" + ("\n".join(f"- {m}" for m in mems) if mems else "（まだ記憶は保存されていません）")
+                            logs.append({"q": "🧠 長期記憶の参照", "res": sres})
+                            yield f"data: {json.dumps({'type':'s','q':'🧠 長期記憶の参照','res':sres})}\n\n"
+                        elif fname == "save_memory":
                             fact = (parsed.get("fact") or raw_args).strip()
                             mems = db.setdefault("memories", {}).setdefault(u, [])
                             if fact and fact not in mems:
