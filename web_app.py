@@ -392,6 +392,11 @@ def login(req: AuthReq):
     tok = secrets.token_hex(24); uname = req.username.strip(); SESSIONS[tok] = uname; db.setdefault("sessions", {})[tok] = uname; save_db(db)
     return {"token": tok, "username": req.username.strip(), "admin": u["admin"]}
 
+@app.get("/api/me")
+def get_me(authorization: str = Header("")):
+    u, db = get_user(authorization)
+    return {"username": u, "admin": db["users"][u].get("admin", False)}
+
 @app.get("/api/admin/users")
 def list_users(authorization: str = Header("")):
     u, db = get_user(authorization)

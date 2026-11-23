@@ -222,6 +222,8 @@ async function doAuth(t){
 }
 function logout(){localStorage.removeItem("nv_tok");location.reload();}
 async function init(){
+ const mr=await api("/api/me");
+ if(mr.ok){const md=await mr.json();if(md.admin)document.getElementById("adm-btn").style.display="inline-block";}
  const r=await api("/api/chats"); if(!r.ok){auth.style.display="flex";return;}
  chats=await r.json(); const ks=Object.keys(chats);
  if(!ks.length)await newChat(true); else{cid=ks.shift();renderList();renderMsgs();}
