@@ -443,27 +443,48 @@ def tts_api(req: TtsReq, authorization: str = Header("")):
     if not c_key:
         raise HTTPException(500, "CARTESIA_API_KEY 未設定")
     vid = (os.getenv("CARTESIA_VOICE_ID") or req.voice_id).strip()
-    from cartesia import Cartesia
-    client = Cartesia(api_key=c_key, base_url="https://" + "api.cartesia.ai")
-    resp = client.tts.generate(
-        model_id="sonic-3.6",
-        transcript=txt,
-        voice=vid,
-        language="ja",
-        output_format={
-            "container": "wav",
-            "encoding": "pcm_s16le",
-            "sample_rate": 44100
-        },
-        generation_config={
-            "speed": 1,
-            "volume": 1
-        }
-    )
-    audio_data = b"".join(resp) if not isinstance(resp, (bytes, bytearray)) else bytes(resp)
-    if audio_data:
-        return Response(content=audio_data, media_type="audio/wav")
-    raise HTTPException(500, "Cartesia音声データが空です")
+    try:
+        from cartesia import Cartesia
+        client = Cartesia(api_key=c_key, base_url="https://" + "api.cartesia.ai")
+        resp = client.tts.generate(
+            model_id="sonic-3.6",
+            transcript=txt,
+            voice=vid,
+            language="ja",
+            output_format={
+                "container": "wav",
+                "encoding": "pcm_s16le",
+                "sample_rate": 44100
+            },
+            generation_config={
+                "speed": 1,
+                "volume": 1
+            }
+        )
+        if hasattr(resp, "write_to_file"):
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+                tmp_wav = tf.name
+            try:
+                resp.write_to_file(tmp_wav)
+                with open(tmp_wav, "rb") as af:
+                    audio_data = af.read()
+            finally:
+                if os.path.exists(tmp_wav):
+                    os.unlink(tmp_wav)
+        elif hasattr(resp, "read"):
+            audio_data = resp.read()
+        elif isinstance(resp, (bytes, bytearray)):
+            audio_data = bytes(resp)
+        else:
+            audio_data = b"".join(resp)
+
+        if audio_data:
+            return Response(content=audio_data, media_type="audio/wav")
+        raise HTTPException(500, "Cartesia音声データが空です")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Cartesia SDK Error: {type(e).__name__}: {e}")
 
 @app.post("/api/chat_stream")
 def chat_stream(req: ChatReq, authorization: str = Header("")):
