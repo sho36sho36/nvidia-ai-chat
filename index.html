@@ -1,7 +1,7 @@
 ﻿<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>NVIDIA AI Multi-Chat</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#0d1117;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;height:100vh}
+*{box-sizing:border-box}body{margin:0;background:#0d1117;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:flex;height:100dvh}
 #auth{position:fixed;inset:0;background:#0d1117;display:flex;align-items:center;justify-content:center;z-index:99}
 .box{background:#161b22;padding:24px;border:1px solid #30363d;border-radius:10px;width:320px}
 input,select,textarea,button{background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:8px;font-size:14px}
@@ -27,16 +27,32 @@ p code,li code,.math{background:#21262d;padding:2px 6px;border-radius:4px;color:
 #bot{padding:10px;background:#161b22;border-top:1px solid #30363d;display:flex;gap:8px}
 textarea{flex:1;resize:none;height:54px}
 #adm-modal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:50}
-</style></head><body>
+#m-btn{display:none;font-size:18px;padding:4px 10px}
+#ovl{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:30}
+.md table{display:block;overflow-x:auto}
+@media(max-width:768px){
+  #m-btn{display:inline-block}
+  #side{position:fixed;top:0;bottom:0;left:0;z-index:40;width:270px;transform:translateX(-100%);transition:transform .25s ease}
+  #side.open{transform:translateX(0)}
+  #ovl.open{display:block}
+  #top{padding:8px;gap:6px}
+  #msel{max-width:145px;font-size:13px;padding:6px}
+  #esel{font-size:13px;padding:6px}
+  #msgs{padding:10px;gap:10px}
+  .turn{padding:10px}
+  #bot{padding:8px;gap:6px}
+  textarea{font-size:16px;height:46px}
+  #sbtn{padding:0 14px}
+}</style></head><body>
 <div id="auth"><div class="box"><h3>🔐 NVIDIA AI ログイン</h3>
 <input id="au" placeholder="ユーザー名" style="width:100%;margin-bottom:8px">
 <input id="ap" type="password" placeholder="パスワード" style="width:100%;margin-bottom:12px">
 <div style="display:flex;gap:8px"><button onclick="doAuth('login')" style="flex:1">ログイン</button><button class="sec" onclick="doAuth('register')" style="flex:1">新規申請</button></div>
 <p id="amsg" style="color:#f0883e;font-size:13px;margin-top:10px"></p></div></div>
 <div id="adm-modal"><div class="box" style="width:380px"><h3>👑 ユーザー承認管理</h3><div id="ulist"></div><button class="sec" onclick="document.getElementById('adm-modal').style.display='none'" style="margin-top:10px;width:100%">閉じる</button></div></div>
-<div id="side"><div style="display:flex;gap:4px"><button onclick="newChat()" style="flex:1">+新規</button><button class="sec" onclick="renChat()">名変</button><button class="del" onclick="delChat()">削除</button></div>
+<div id="ovl" onclick="toggleSide(false)"></div><div id="side"><div style="display:flex;gap:4px"><button onclick="newChat()" style="flex:1">+新規</button><button class="sec" onclick="renChat()">名変</button><button class="del" onclick="delChat()">削除</button></div>
 <input id="sq" placeholder="🔍 全文検索..." oninput="renderList()"><div id="clist"></div></div>
-<div id="main"><div id="top">
+<div id="main"><div id="top"><button id="m-btn" class="sec" onclick="toggleSide()">☰</button>
 <select id="msel"><option value="mistralai/mistral-large-4-1t-a52b">Mistral Large 4</option><option value="nvidia/nemotron-3.5-bolt-e4b">Nemotron 3.5 Bolt</option><option value="stepfun-ai/step-5-preview">Step 5 Preview</option><option value="z-ai/glm-5-3-flash">GLM-5-3-Flash</option><option value="meta/muse-glimmer-30b">Muse Glimmer 30B</option></select>
 <select id="esel"><option value="low">思考:Low</option><option value="medium">思考:Med</option><option value="high">思考:High</option></select>
 <button id="adm-btn" class="sec" style="display:none" onclick="openAdmin()">👑 ユーザー管理</button>
@@ -106,16 +122,16 @@ async function init(){
  if(!ks.length)await newChat(true); else{cid=ks.shift();renderList();renderMsgs();}
 }
 async function sync(){await api("/api/chats",{method:"POST",body:JSON.stringify(chats)});}
-async function newChat(skip){cid="c"+Date.now().toString(36);chats[cid]={title:"新規チャット",msgs:[],turns:[]};renderList();renderMsgs();if(!skip)await sync();}
+async function newChat(skip){toggleSide(false);cid="c"+Date.now().toString(36);chats[cid]={title:"新規チャット",msgs:[],turns:[]};renderList();renderMsgs();if(!skip)await sync();}
 async function renChat(){const n=prompt("新しいチャット名",chats[cid].title);if(n){chats[cid].title=n;renderList();await sync();}}
 async function delChat(){delete chats[cid];const ks=Object.keys(chats);if(!ks.length)await newChat();else{cid=ks.shift();renderList();renderMsgs();await sync();}}
-function renderList(){
+function toggleSide(f){const s=document.getElementById("side"),o=document.getElementById("ovl");const open=f!==undefined?f:!s.classList.contains("open");s.classList.toggle("open",open);o.classList.toggle("open",open);}function renderList(){
  const q=sq.value.toLowerCase(); clist.innerHTML="";
  for(const[k,v]of Object.entries(chats)){
   const hit=!q||v.title.toLowerCase().includes(q)||v.turns.some(t=>(t.q+t.a+t.r).toLowerCase().includes(q));
   if(!hit)continue;
   const el=document.createElement("div");el.className="citem"+(k===cid?" act":"");
-  el.textContent=`${v.title} (${v.turns.length})`;el.onclick=()=>{cid=k;renderList();renderMsgs();};clist.appendChild(el);
+  el.textContent=`${v.title} (${v.turns.length})`;el.onclick=()=>{cid=k;renderList();renderMsgs();toggleSide(false);};clist.appendChild(el);
  }
 }
 function enhance(d){
@@ -180,6 +196,7 @@ async function openAdmin(){
 async function admAct(t,u){await api(t==="approve"?`/api/admin/approve/${u}`:`/api/admin/user/${u}`,{method:t==="approve"?"POST":"DELETE"});openAdmin();}
 if(tok){auth.style.display="none";init();}
 </script></body></html>
+
 
 
 
