@@ -1,5 +1,5 @@
 from pypdf import PdfReader
-import os, re, json, html, base64, io, time, uuid, hashlib, secrets, subprocess, tempfile, urllib.parse, xml.etree.ElementTree as ET, requests
+import os, re, json, html, base64, io, time, concurrent.futures, uuid, hashlib, secrets, subprocess, tempfile, urllib.parse, xml.etree.ElementTree as ET, requests
 from pathlib import Path
 from datetime import datetime
 from ddgs import DDGS
@@ -33,6 +33,21 @@ def _init_pg():
 _init_pg()
 
 TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "ask_second_opinion",
+            "description": "高度な推論、複雑な設計判断、議論が分かれるテーマ、厳密な検証が必要な場合に、他のAIモデル（セカンドオピニオン）に並行して意見を求め、多角的な回答を得る。通常の簡単な質問では使わず、AI自身が他モデルの意見が必要と判断した時のみ呼び出すこと。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "他モデルに意見を求めたい核心の質問や課題"},
+                    "context": {"type": "string", "description": "前提条件や背景情報（任意）"}
+                },
+                "required": ["question"]
+            }
+        }
+    },
     {
         "type": "function",
         "function": {
@@ -275,6 +290,34 @@ def parse_document(name: str, b64_data: str) -> str:
             return f"【添付ファイル: {name}】\n```{ext.lstrip('.')}\n{txt[:25000]}\n```"
     except Exception as e:
         return f"【添付ファイル読込エラー ({name})】: {e}"
+
+def get_second_opinion(question: str, context: str, current_model: str, api_key: str, invoke_url: str) -> str:
+    candidates = [
+        "mistralai/mistral-large-4-1t-a52b",
+        "z-ai/glm-5-3-flash",
+        "stepfun-ai/step-5-preview"
+    ]
+    peers = [m for m in candidates if m != current_model][:2]
+    hdr = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    prompt = f"以下の課題について、簡潔かつ論理的にあなたの見解・解決策を述べてください。\n\n【課題】\n{question}"
+    if context:
+        prompt += f"\n\n【前提・背景】\n{context}"
+
+    def ask_one(m_id: str) -> str:
+        try:
+            pay = {"model": m_id, "messages": [{"role": "user", "content": prompt}], "max_tokens": 1200, "temperature": 0.4}
+            r = requests.post(invoke_url, headers=hdr, json=pay, timeout=45)
+            if r.status_code == 200:
+                ch = (r.json().get("choices") or [{}])
+                ans = ((ch.get("message") or {}).get("content") or "").strip()
+                return f"### 🤖 {m_id.split('/')[-1]} の見解\n{ans}"
+            return f"### 🤖 {m_id.split('/')[-1]} (エラー {r.status_code})"
+        except Exception as e:
+            return f"### 🤖 {m_id.split('/')[-1]} (通信エラー: {e})"
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        results = list(ex.map(ask_one, peers))
+    return "\n\n".join(results)
 
 def run_python_tool(code: str) -> str:
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
@@ -638,7 +681,7 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
         f"今日は{datetime.now():%Y年%m月%d日}です。天気や気温は get_weather ツールを、最新ニュースや調べ物は web_search ツールを、"
         "URLの内容を尋ねられた場合や検索結果の詳細を読む場合は read_url ツールを、複雑な計算や数値検証・日付計算が必要な場合は run_python ツール（もしエラーが出たら原因を分析して修正版コードで再実行する自己修正ループを行うこと）を、"
         "用語や人物の定義は search_wikipedia を、学術論文や最新AI研究は search_arxiv ツールを、株価・為替・暗号資産の現在価格は get_market_data ツールを必ず呼び出して日本語で回答してください。"
-        "また、ユーザーが自身の属性・好み・使用技術・今後の会話でも覚えておくべき前提を話した場合は save_memory ツールで保存し、訂正や忘却を求めた場合は delete_memory ツールを使ってください。"
+        "また、ユーザーが自身の属性・好み・使用技術・今後の会話でも覚えておくべき前提を話した場合は save_memory ツールで保存し、訂正や忘却を求めた場合は delete_memory ツールを使ってください。また、非常に難しい論理問題や設計比較など、他モデルの意見（セカンドオピニオン）も参考にして精度を高めたいとあなた自身が判断した場合に限り、ask_second_opinion ツールを呼び出して合議を行ってください。"
     )
     sys_p = mem_txt + sys_p
     cobj = uchats.setdefault(req.cid, {"title": req.text[:14], "msgs": [{"role": "system", "content": sys_p}], "turns": []})
@@ -734,7 +777,14 @@ def chat_stream(req: ChatReq, authorization: str = Header("")):
                             parsed = {"query": raw_args, "location": raw_args}
                             clean_args = json.dumps(parsed, ensure_ascii=False)
 
-                        if fname == "recall_memories":
+                        if fname == "ask_second_opinion":
+                            sq = (parsed.get("question") or raw_args).strip()
+                            sctx = (parsed.get("context") or "").strip()
+                            yield f"data: {json.dumps({'type':'status','msg':'🤝 他モデルと合議中（セカンドオピニオン取得）...'})}\n\n"
+                            sres = get_second_opinion(sq, sctx, req.model, api_key, invoke_url)
+                            logs.append({"q": f"🤝 マルチモデル合議: {sq[:30]}", "res": sres})
+                            yield f"data: {json.dumps({'type':'s','q':f'🤝 マルチモデル合議: {sq[:30]}','res':sres})}\n\n"
+                        elif fname == "recall_memories":
                             mems = db.setdefault("memories", {}).get(u, [])
                             sres = "【保存されている長期記憶一覧】\n" + ("\n".join(f"- {m}" for m in mems) if mems else "（まだ記憶は保存されていません）")
                             logs.append({"q": "🧠 長期記憶の参照", "res": sres})
