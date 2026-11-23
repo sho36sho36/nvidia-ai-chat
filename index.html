@@ -43,7 +43,7 @@ textarea{flex:1;resize:none;height:54px}
   #bot{padding:8px;gap:6px}
   textarea{font-size:16px;height:46px}
   #sbtn{padding:0 14px}
-}#img-bar{display:none;padding:6px 12px;background:#161b22;border-top:1px solid #30363d;align-items:center;gap:10px}#img-prev{max-height:64px;border-radius:6px;border:1px solid #58a6ff}.q-img{max-width:240px;max-height:200px;border-radius:8px;margin-top:6px;display:block;border:1px solid #30363d}#doc-bar{display:none;padding:6px 12px;background:#161b22;border-top:1px solid #30363d;align-items:center;gap:10px;font-size:13px;color:#79c0ff}</style></head><body>
+}#img-bar{display:none;padding:6px 12px;background:#161b22;border-top:1px solid #30363d;align-items:center;gap:10px}#img-prev{max-height:64px;border-radius:6px;border:1px solid #58a6ff}.q-img{max-width:240px;max-height:200px;border-radius:8px;margin-top:6px;display:block;border:1px solid #30363d}#doc-bar{display:none;padding:6px 12px;background:#161b22;border-top:1px solid #30363d;align-items:center;gap:10px;font-size:13px;color:#79c0ff}@keyframes pulse{0%{opacity:1}50%{opacity:.4}100%{opacity:1}}.rec{background:#da3633!important;animation:pulse 1s infinite}</style></head><body>
 <div id="auth"><div class="box"><h3>🔐 NVIDIA AI ログイン</h3>
 <input id="au" placeholder="ユーザー名" style="width:100%;margin-bottom:8px">
 <input id="ap" type="password" placeholder="パスワード" style="width:100%;margin-bottom:12px">
@@ -55,11 +55,63 @@ textarea{flex:1;resize:none;height:54px}
 <div id="main"><div id="top"><button id="m-btn" class="sec" onclick="toggleSide()">☰</button>
 <select id="msel"><option value="mistralai/mistral-large-4-1t-a52b">Mistral Large 4</option><option value="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning">🖼️ Nemotron 3 Nano Omni 30B (Vision)</option><option value="google/paligemma">🖼️ PaliGemma (Vision)</option><option value="nvidia/nemotron-3.5-bolt-e4b">Nemotron 3.5 Bolt</option><option value="stepfun-ai/step-5-preview">Step 5 Preview</option><option value="z-ai/glm-5-3-flash">GLM-5-3-Flash</option><option value="meta/muse-glimmer-30b">Muse Glimmer 30B</option></select>
 <select id="esel"><option value="low">思考:Low</option><option value="medium">思考:Med</option><option value="high">思考:High</option></select>
-<button id="adm-btn" class="sec" style="display:none" onclick="openAdmin()">👑 ユーザー管理</button>
+<button id="tts-auto" class="sec" onclick="toggleAutoTts()" title="回答完了時に自動で読み上げ">🔇 自動読上:OFF</button><button id="adm-btn" class="sec" style="display:none" onclick="openAdmin()">👑 ユーザー管理</button>
 <button class="sec" onclick="logout()" style="margin-left:auto">ログアウト</button></div>
 <div id="msgs"></div>
-<div id="doc-bar"><span id="doc-name"></span><button class="del" style="padding:4px 8px;font-size:12px" onclick="clearDoc()">✕ 解除</button></div><div id="img-bar"><img id="img-prev"><span style="font-size:12px;color:#8b949e">画像を添付中</span><button class="del" style="padding:4px 8px;font-size:12px" onclick="clearImg()">✕ 解除</button></div><div id="bot"><input type="file" id="img-file" accept="image/*" style="display:none" onchange="handleImg(this.files.item(0))"><button class="sec" onclick="document.getElementById('img-file').click()" title="画像を添付">🖼️</button><input type="file" id="doc-file" accept=".pdf,.csv,.tsv,.json,.txt,.md,.py,.js,.ts,.html,.css,.java,.c,.cpp,.go,.rs,.sql,.yaml,.yml,.xml,.log" style="display:none" onchange="handleDoc(this.files.item(0))"><button class="sec" onclick="document.getElementById('doc-file').click()" title="PDF/CSV/コードを添付">📄</button><textarea id="inp" placeholder="質問を入力 (Shift+Enterで改行 / Enterで送信)"></textarea><button id="sbtn" onclick="send()">送信</button></div></div>
+<div id="doc-bar"><span id="doc-name"></span><button class="del" style="padding:4px 8px;font-size:12px" onclick="clearDoc()">✕ 解除</button></div><div id="img-bar"><img id="img-prev"><span style="font-size:12px;color:#8b949e">画像を添付中</span><button class="del" style="padding:4px 8px;font-size:12px" onclick="clearImg()">✕ 解除</button></div><div id="bot"><input type="file" id="img-file" accept="image/*" style="display:none" onchange="handleImg(this.files.item(0))"><button class="sec" onclick="document.getElementById('img-file').click()" title="画像を添付">🖼️</button><input type="file" id="doc-file" accept=".pdf,.csv,.tsv,.json,.txt,.md,.py,.js,.ts,.html,.css,.java,.c,.cpp,.go,.rs,.sql,.yaml,.yml,.xml,.log" style="display:none" onchange="handleDoc(this.files.item(0))"><button class="sec" onclick="document.getElementById('doc-file').click()" title="PDF/CSV/コードを添付">📄</button><button id="mic-btn" class="sec" onclick="toggleMic()" title="音声入力">🎤</button><textarea id="inp" placeholder="質問を入力 (Shift+Enterで改行 / Enterで送信)"></textarea><button id="sbtn" onclick="send()">送信</button></div></div>
 <script>
+let autoTts=false,recog=null,isRec=false;
+function toggleAutoTts(){
+ autoTts=!autoTts;
+ const b=document.getElementById("tts-auto");
+ b.textContent=autoTts?"🔊 自動読上:ON":"🔇 自動読上:OFF";
+ b.style.borderColor=autoTts?"#58a6ff":"#30363d";
+ if(!autoTts&&window.speechSynthesis)speechSynthesis.cancel();
+}
+function cleanForSpeech(t){
+ return String(t||"")
+  .replace(/```[\s\(\S\)]*?```/g,"、コードブロックは省略します、")
+  .replace(/\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]/g,"、数式、")
+  .replace(/[#*`>|_~\[\]()]/g," ")
+  .replace(/https?:\/\/\S+/g,"リンク")
+  .replace(/\s+/g," ").trim();
+}
+function speakText(btn,raw){
+ if(!window.speechSynthesis){alert("このブラウザは音声読み上げに非対応です");return;}
+ if(speechSynthesis.speaking){
+  speechSynthesis.cancel();
+  if(btn&&btn.dataset.playing==="1"){btn.dataset.playing="0";btn.textContent="🔊 読み上げ";return;}
+ }
+ const txt=cleanForSpeech(raw);if(!txt)return;
+ const u=new SpeechSynthesisUtterance(txt);
+ u.lang="ja-JP";u.rate=1.05;
+ const vs=speechSynthesis.getVoices();
+ const jp=vs.find(v=>v.lang.includes("ja")&&(v.name.includes("Google")||v.name.includes("Nanami")||v.name.includes("Microsoft")));
+ if(jp)u.voice=jp;
+ if(btn){btn.dataset.playing="1";btn.textContent="⏹ 停止";u.onend=u.onerror=()=>{btn.dataset.playing="0";btn.textContent="🔊 読み上げ";};}
+ speechSynthesis.speak(u);
+}
+if(window.speechSynthesis)speechSynthesis.onvoiceschanged=()=>speechSynthesis.getVoices();
+function toggleMic(){
+ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!SR){alert("このブラウザは音声認識に非対応です（Chrome / Edge / Safari推奨）");return;}
+ const btn=document.getElementById("mic-btn");
+ if(isRec&&recog){recog.stop();return;}
+ recog=new SR();recog.lang="ja-JP";recog.interimResults=true;recog.continuous=false;
+ const base=inp.value?(inp.value+" "):"";
+ recog.onstart=()=>{isRec=true;btn.classList.add("rec");btn.textContent="🔴";};
+ recog.onresult=e=>{
+  let interim="",final="";
+  for(let i=e.resultIndex;i<e.results.length;i++){
+   if(e.results.item(i).isFinal)final+=e.results.item(i).item(0).transcript;
+   else interim+=e.results.item(i).item(0).transcript;
+  }
+  inp.value=base+final+interim;
+ };
+ recog.onend=()=>{isRec=false;btn.classList.remove("rec");btn.textContent="🎤";inp.focus();};
+ recog.onerror=()=>{isRec=false;btn.classList.remove("rec");btn.textContent="🎤";};
+ recog.start();
+}
 let pendingDocName="",pendingDocData="";
 function clearDoc(){pendingDocName="";pendingDocData="";document.getElementById("doc-bar").style.display="none";document.getElementById("doc-file").value="";}
 function handleDoc(file){
@@ -186,12 +238,12 @@ function enhance(d){
 }
 function renderMsgs(){
  msgs.innerHTML="";
- (chats[cid]?.turns||[]).forEach(t=>{
+ (chats[cid]?.turns||[]).forEach((t,idx)=>{
   const d=document.createElement("div");d.className="turn";
   let h=`<div class="q">🧑 ${esc(t.q)} <small style="color:#8b949e">(${t.m})</small>${t.img?`<img class="q-img" src="${t.img}">`:""}</div>`;
   if(t.s?.length)h+=`<details><summary>🔍 Web検索 (${t.s.length}回)</summary>${t.s.map(x=>`<b>${esc(x.q)}</b><div class="md">${md(x.res)}</div>`).join("<hr>")}</details>`;
   if(t.r)h+=`<details><summary>🧠 思考プロセス (${t.r.length}字)</summary><div class="md">${md(t.r)}</div></details>`;
-  h+=`<div class="md ans">${md(t.a)}</div><div class="stat">${t.st}</div>`;
+  h+=`<div class="md ans">${md(t.a)}</div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px"><div class="stat" style="margin-top:0">${t.st}</div><button class="sec" style="padding:3px 8px;font-size:12px" onclick="speakText(this, chats[cid].turns.at(${idx})?.a)">🔊 読み上げ</button></div>`;
   d.innerHTML=h;enhance(d);msgs.appendChild(d);
  });
  msgs.scrollTop=msgs.scrollHeight;
@@ -219,7 +271,7 @@ async function send(){
    else if(ev.type==="c"){atxt+=ev.text;abox.innerHTML=md(atxt);}
    else if(ev.type==="status"){abox.textContent=ev.msg;}
    else if(ev.type==="s"){sdet.style.display="block";sbox.innerHTML+=`<b>${esc(ev.q)}</b>${md(ev.res)}<hr>`;}
-   else if(ev.type==="done"){chats[cid].turns.push(ev.turn);renderList();renderMsgs();}
+   else if(ev.type==="done"){chats[cid].turns.push(ev.turn);renderList();renderMsgs();if(autoTts)speakText(null,ev.turn.a);}
    else if(ev.type==="err"){abox.textContent="❌ "+ev.msg;}
    if(btm)msgs.scrollTop=msgs.scrollHeight;
   }
