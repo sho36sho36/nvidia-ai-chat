@@ -486,6 +486,73 @@ def tts_api(req: TtsReq, authorization: str = Header("")):
     except Exception as e:
         raise HTTPException(500, f"Cartesia SDK Error: {type(e).__name__}: {e}")
 
+class InquiryReq(BaseModel):
+    category: str
+    subject: str
+    message: str
+
+class ReplyReq(BaseModel):
+    status: str
+    reply: str
+
+@app.get("/contact", response_class=HTMLResponse)
+def contact_page():
+    return HTMLResponse(content=Path("contact.html").read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+
+@app.get("/api/inquiries")
+def get_inquiries(authorization: str = Header("")):
+    u, db = get_user(authorization)
+    is_admin = db["users"][u].get("admin", False)
+    items = db.setdefault("inquiries", [])
+    if is_admin:
+        return {"admin": True, "username": u, "items": items}
+    return {"admin": False, "username": u, "items": [x for x in items if x.get("user") == u]}
+
+@app.post("/api/inquiries")
+def create_inquiry(req: InquiryReq, authorization: str = Header("")):
+    u, db = get_user(authorization)
+    subj, msg = req.subject.strip(), req.message.strip()
+    if not subj or not msg:
+        raise HTTPException(400, "件名と内容を入力してください")
+    items = db.setdefault("inquiries", [])
+    item = {
+        "id": uuid.uuid4().hex[:10],
+        "user": u,
+        "category": req.category.strip() or "その他",
+        "subject": subj,
+        "message": msg,
+        "status": "未対応",
+        "reply": "",
+        "created_at": f"{datetime.now():%Y-%m-%d %H:%M}",
+        "updated_at": ""
+    }
+    items.insert(0, item)
+    save_db(db)
+    return {"ok": True, "item": item}
+
+@app.post("/api/admin/inquiries/{inq_id}")
+def reply_inquiry(inq_id: str, req: ReplyReq, authorization: str = Header("")):
+    u, db = get_user(authorization)
+    if not db["users"][u].get("admin", False):
+        raise HTTPException(403, "管理者権限が必要です")
+    for it in db.setdefault("inquiries", []):
+        if it.get("id") == inq_id:
+            it["status"] = req.status
+            it["reply"] = req.reply.strip()
+            it["updated_at"] = f"{datetime.now():%Y-%m-%d %H:%M}"
+            save_db(db)
+            return {"ok": True}
+    raise HTTPException(404, "対象の問い合わせが見つかりません")
+
+@app.delete("/api/admin/inquiries/{inq_id}")
+def delete_inquiry(inq_id: str, authorization: str = Header("")):
+    u, db = get_user(authorization)
+    if not db["users"][u].get("admin", False):
+        raise HTTPException(403, "管理者権限が必要です")
+    db["inquiries"] = [it for it in db.setdefault("inquiries", []) if it.get("id") != inq_id]
+    save_db(db)
+    return {"ok": True}
+
 @app.post("/api/chat_stream")
 def chat_stream(req: ChatReq, authorization: str = Header("")):
     u, db = get_user(authorization)
