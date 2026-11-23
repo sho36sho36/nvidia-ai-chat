@@ -3,8 +3,8 @@ import os, re, json, html, base64, io, time, uuid, hashlib, secrets, subprocess,
 from pathlib import Path
 from datetime import datetime
 from ddgs import DDGS
-from fastapi import FastAPI, HTTPException, Header
-from fastapi.responses import HTMLResponse, StreamingResponse, Response
+from fastapi import FastAPI, HTTPException, Header, UploadFile, File
+from fastapi.responses import HTMLResponse, StreamingResponse, Response, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 
@@ -461,6 +461,44 @@ def tts_api(req: TtsReq, authorization: str = Header("")):
         raise
     except Exception as e:
         raise HTTPException(500, f"TTS接続エラー: {e}")
+
+class TtsReq(BaseModel):
+    text: str
+    voice_id: str = "JBFqnCBsd6RMkjVDRZzb"
+
+@app.post("/api/tts")
+def tts_api(req: TtsReq, authorization: str = Header("")):
+    get_user(authorization)
+    txt = req.text.strip()[:1500]
+    if not txt:
+        raise HTTPException(400, "empty")
+    el_key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
+    if not el_key:
+        raise HTTPException(500, "ELEVENLABS_API_KEY 未設定")
+    vid = (os.getenv("ELEVENLABS_VOICE_ID") or req.voice_id).strip()
+    url = "https://" + "api.elevenlabs.io" + "/v1/text-to-speech/" + vid
+    hdr = {"xi-api-key": el_key, "Content-Type": "application/json", "Accept": "audio/mpeg"}
+    pay = {"text": txt, "model_id": "eleven_flash_v2_5"}
+    r = requests.post(url, headers=hdr, json=pay, timeout=30)
+    if r.status_code == 200 and r.content:
+        return Response(content=r.content, media_type="audio/mpeg")
+    raise HTTPException(r.status_code, f"ElevenLabs TTS Error: {r.text[:150]}")
+
+@app.post("/api/stt")
+async def stt_api(file: UploadFile = File(...), authorization: str = Header("")):
+    get_user(authorization)
+    el_key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
+    if not el_key:
+        raise HTTPException(500, "ELEVENLABS_API_KEY 未設定")
+    audio_bytes = await file.read()
+    url = "https://" + "api.elevenlabs.io" + "/v1/speech-to-text"
+    hdr = {"xi-api-key": el_key}
+    files = {"file": (file.filename or "audio.webm", audio_bytes, file.content_type or "audio/webm")}
+    data = {"model_id": "scribe_v1", "language_code": "jpn"}
+    r = requests.post(url, headers=hdr, files=files, data=data, timeout=30)
+    if r.status_code == 200:
+        return {"text": r.json().get("text", "")}
+    raise HTTPException(r.status_code, f"ElevenLabs STT Error: {r.text[:150]}")
 
 @app.post("/api/chat_stream")
 def chat_stream(req: ChatReq, authorization: str = Header("")):

@@ -60,23 +60,22 @@ textarea{flex:1;resize:none;height:54px}
 <div id="msgs"></div>
 <div id="doc-bar"><span id="doc-name"></span><button class="del" style="padding:4px 8px;font-size:12px" onclick="clearDoc()">✕ 解除</button></div><div id="img-bar"><img id="img-prev"><span style="font-size:12px;color:#8b949e">画像を添付中</span><button class="del" style="padding:4px 8px;font-size:12px" onclick="clearImg()">✕ 解除</button></div><div id="bot"><input type="file" id="img-file" accept="image/*" style="display:none" onchange="handleImg(this.files.item(0))"><button class="sec" onclick="document.getElementById('img-file').click()" title="画像を添付">🖼️</button><input type="file" id="doc-file" accept=".pdf,.csv,.tsv,.json,.txt,.md,.py,.js,.ts,.html,.css,.java,.c,.cpp,.go,.rs,.sql,.yaml,.yml,.xml,.log" style="display:none" onchange="handleDoc(this.files.item(0))"><button class="sec" onclick="document.getElementById('doc-file').click()" title="PDF/CSV/コードを添付">📄</button><button id="mic-btn" class="sec" onclick="toggleMic()" title="音声入力">🎤</button><textarea id="inp" placeholder="質問を入力 (Shift+Enterで改行 / Enterで送信)"></textarea><button id="sbtn" onclick="send()">送信</button></div></div>
 <script>
-let autoTts=false,recog=null,isRec=false;
+let autoTts=false,mediaRec=null,audioChunks=[],isRec=false,curAudio=null,curTtsBtn=null;
 function toggleAutoTts(){
  autoTts=!autoTts;
  const b=document.getElementById("tts-auto");
  b.textContent=autoTts?"🔊 自動読上:ON":"🔇 自動読上:OFF";
  b.style.borderColor=autoTts?"#58a6ff":"#30363d";
- if(!autoTts&&window.speechSynthesis)speechSynthesis.cancel();
+ if(!autoTts)stopAllAudio();
 }
 function cleanForSpeech(t){
  return String(t||"")
-  .replace(/```[\s\(\S\)]*?```/g,"、コードブロックは省略します、")
+  .replace(/```[\s\S]*?```/g,"、コードブロックは省略します、")
   .replace(/\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]/g,"、数式、")
   .replace(/[#*`>|_~\[\]()]/g," ")
   .replace(/https?:\/\/\S+/g,"リンク")
   .replace(/\s+/g," ").trim();
 }
-let curAudio=null,curTtsBtn=null;
 function stopAllAudio(){
  if(curAudio){curAudio.pause();curAudio=null;}
  if(window.speechSynthesis)speechSynthesis.cancel();
@@ -89,12 +88,8 @@ async function speakText(btn,raw){
  const txt=cleanForSpeech(raw);if(!txt)return;
  if(btn){btn.dataset.playing="1";btn.textContent="⏳ 生成中...";curTtsBtn=btn;}
  try{
-  const r=await api("/api/tts",{method:"POST",body:JSON.stringify({text:txt,voice:"Magpie-ZeroShot.Female-1"})});
-  if(!r.ok){
-   const err=await r.text();
-   console.warn("Magpie TTS Fallback:",err);
-   throw new Error(err);
-  }
+  const r=await api("/api/tts",{method:"POST",body:JSON.stringify({text:txt})});
+  if(!r.ok)throw new Error(await r.text());
   const blob=await r.blob();
   const url=URL.createObjectURL(blob);
   curAudio=new Audio(url);
@@ -102,6 +97,7 @@ async function speakText(btn,raw){
   curAudio.onended=curAudio.onerror=()=>{URL.revokeObjectURL(url);stopAllAudio();};
   await curAudio.play();
  }catch(e){
+  console.warn("ElevenLabs TTS fallback:",e);
   if(window.speechSynthesis){
    const u=new SpeechSynthesisUtterance(txt);u.lang="ja-JP";u.rate=1.05;
    if(btn)btn.textContent="⏹ 停止(標準)";
@@ -110,26 +106,42 @@ async function speakText(btn,raw){
   }else{stopAllAudio();}
  }
 }
-if(window.speechSynthesis)speechSynthesis.onvoiceschanged=()=>speechSynthesis.getVoices();
-function toggleMic(){
- const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
- if(!SR){alert("このブラウザは音声認識に非対応です（Chrome / Edge / Safari推奨）");return;}
+async function toggleMic(){
  const btn=document.getElementById("mic-btn");
- if(isRec&&recog){recog.stop();return;}
- recog=new SR();recog.lang="ja-JP";recog.interimResults=true;recog.continuous=false;
- const base=inp.value?(inp.value+" "):"";
- recog.onstart=()=>{isRec=true;btn.classList.add("rec");btn.textContent="🔴";};
- recog.onresult=e=>{
-  let interim="",final="";
-  for(let i=e.resultIndex;i<e.results.length;i++){
-   if(e.results.item(i).isFinal)final+=e.results.item(i).item(0).transcript;
-   else interim+=e.results.item(i).item(0).transcript;
-  }
-  inp.value=base+final+interim;
- };
- recog.onend=()=>{isRec=false;btn.classList.remove("rec");btn.textContent="🎤";inp.focus();};
- recog.onerror=()=>{isRec=false;btn.classList.remove("rec");btn.textContent="🎤";};
- recog.start();
+ if(isRec&&mediaRec){
+  mediaRec.stop();
+  return;
+ }
+ try{
+  const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+  audioChunks=[];
+  mediaRec=new MediaRecorder(stream);
+  mediaRec.ondataavailable=e=>{if(e.data.size>0)audioChunks.push(e.data);};
+  mediaRec.onstart=()=>{isRec=true;btn.classList.add("rec");btn.textContent="🔴";};
+  mediaRec.onstop=async()=>{
+   isRec=false;btn.classList.remove("rec");btn.textContent="⏳";
+   stream.getTracks().forEach(t=>t.stop());
+   const blob=new Blob(audioChunks,{type:mediaRec.mimeType||"audio/webm"});
+   const fd=new FormData();
+   fd.append("file",blob,"voice.webm");
+   try{
+    const r=await fetch("/api/stt",{method:"POST",headers:{"Authorization":tok},body:fd});
+    const d=await r.json();
+    if(r.ok&&d.text){
+     inp.value=(inp.value?(inp.value+" "):"")+d.text.trim();
+    }else{
+     alert("音声認識エラー: "+(d.detail||"変換失敗"));
+    }
+   }catch(err){
+    alert("通信エラー: "+err);
+   }finally{
+    btn.textContent="🎤";inp.focus();
+   }
+  };
+  mediaRec.start();
+ }catch(err){
+  alert("マイクの使用が許可されていません: "+err);
+ }
 }
 let pendingDocName="",pendingDocData="";
 function clearDoc(){pendingDocName="";pendingDocData="";document.getElementById("doc-bar").style.display="none";document.getElementById("doc-file").value="";}
@@ -188,7 +200,7 @@ function convMath(s){
 }
 function md(src){
  const blocks=[],tables=[];
- let t=String(src||"").replace(/```([a-zA-Z0-9_+-]*)\s*\n([\s\(\S\)]*?)```/g,(_,l,c)=>{blocks.push(`<pre><code class="language-${esc(l)}">${esc(c)}</code></pre>`);return `\x00B${blocks.length-1}\x00`;});
+ let t=String(src||"").replace(/```([a-zA-Z0-9_+-]*)\s*\n([\s\S]*?)```/g,(_,l,c)=>{blocks.push(`<pre><code class="language-${esc(l)}">${esc(c)}</code></pre>`);return `\x00B${blocks.length-1}\x00`;});
  t=t.replace(/\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g,(_,a,b)=>`<span class="mblk">${esc(convMath((a||b).trim()))}</span>`)
   .replace(/\$([^$\n]+?)\$|\\\((.+?)\\\)/g,(_,a,b)=>`<span class="math">${esc(convMath((a||b).trim()))}</span>`);
  t=t.replace(/(?:^\|.+\|[ \t]*\r?\n?){2,}/gm, blk => {
@@ -305,6 +317,7 @@ async function openAdmin(){
 async function admAct(t,u){await api(t==="approve"?`/api/admin/approve/${u}`:`/api/admin/user/${u}`,{method:t==="approve"?"POST":"DELETE"});openAdmin();}
 if(tok){auth.style.display="none";init();}
 </script></body></html>
+
 
 
 
